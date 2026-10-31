@@ -1,0 +1,282 @@
+import { useMemo, useState } from 'react';
+import { dateInMonth, monthIndex, monthKey } from '../../shared/dates';
+import { suggestMatches } from '../../shared/matching';
+import { amountAt, nextOccurrence, occurrenceStatus, occurrences, oneoffStatus, subtree } from '../../shared/plans';
+import { spentInMonth } from '../../shared/stats';
+import type { Plan, PlanType } from '../../shared/types';
+import { MatchList } from '../components/MatchList';
+import { Amount, CategoryChip, CategorySelect, Dot, Icon, Modal, categoryLabel, formatAmountInput, parseAmountInput } from '../components/ui';
+import { api, useData } from '../data';
+import type { Key } from '../i18n';
+import { navigate } from '../router';
+import { useSettings } from '../settings';
+
+const TABS: { id: string; type?: PlanType; label: Key; create?: Key }[] = [
+  { id: 'recurring', type: 'recurring', label: 'tabRecurring', create: 'newRecurring' },
+  { id: 'budgets', type: 'budget', label: 'tabBudgets', create: 'newBudget' },
+  { id: 'oneoff', type: 'oneoff', label: 'tabOneoff', create: 'newOneoff' },
+  { id: 'matching', label: 'tabMatching' }
+];
+
+export function PlanningPage({ tab = 'recurring' }: { tab?: string }) {
+  const { state } = useData();
+  const { t } = useSettings();
+  const current = TABS.find((x) => x.id === tab) ?? TABS[0];
+  const [editing, setEditing] = useState<{ type: PlanType; plan?: Plan } | null>(null);
+  const suggestions = useMemo(() => suggestMatches(state).length, [state]);
+
+  return (
+    <>
+      <div className="head">
+        <h1 className="h1">{t('planning')}</h1>
+        {current.type && <button type="button" className="btn primary" onClick={() => setEditing({ type: current.type! })}><Icon name="plus" />{t(current.create!)}</button>}
+      </div>
+      <div className="tabs" role="tablist">
+        {TABS.map((x) => (
+          <button key={x.id} type="button" role="tab" aria-selected={x.id === current.id} className={`tab ${x.id === current.id ? 'on' : ''}`} onClick={() => navigate(`/planning/${x.id}`)}>
+            {t(x.label)}{x.id === 'matching' && suggestions > 0 && <span className="chip warn">{suggestions}</span>}
+          </button>
+        ))}
+      </div>
+      {current.id === 'recurring' && <RecurringList onEdit={(plan) => setEditing({ type: 'recurring', plan })} />}
+      {current.id === 'budgets' && <BudgetList onEdit={(plan) => setEditing({ type: 'budget', plan })} />}
+      {current.id === 'oneoff' && <OneoffList onEdit={(plan) => setEditing({ type: 'oneoff', plan })} />}
+      {current.id === 'matching' && <MatchList />}
+      {editing && <PlanForm type={editing.type} plan={editing.plan} onClose={() => setEditing(null)} />}
+    </>
+  );
+}
+
+function RecurringList({ onEdit }: { onEdit: (p: Plan) => void }) {
+  const { state, today, lk } = useData();
+  const { t, date } = useSettings();
+  const plans = state.plans.filter((p) => p.type === 'recurring');
+  if (!plans.length) return <div className="card empty">{t('noPlans')}</div>;
+  const month = monthIndex(today);
+  const sorted = [...plans].sort((a, b) => {
+    const ea = a.endDate !== null && a.endDate < today, eb = b.endDate !== null && b.endDate < today;
+    if (ea !== eb) return ea ? 1 : -1;
+    const aa = amountAt(a, today), ab = amountAt(b, today);
+    return (ab > 0 ? 1 : 0) - (aa > 0 ? 1 : 0) || Math.abs(ab) - Math.abs(aa);
+  });
+
+  return (
+    <section className="card flush">
+      <div className="tbl-wrap">
+        <table className="tbl" style={{ minWidth: 820 }}>
+          <thead><tr><th>{t('name')}</th><th>{t('category')}</th><th>{t('frequency')}</th><th>{t('next')}</th><th>{t('duration')}</th><th>{t('thisMonth')}</th><th className="r">{t('amount')}</th></tr></thead>
+          <tbody>
+            {sorted.map((p) => {
+              const next = nextOccurrence(p, today);
+              const ended = p.endDate !== null && p.endDate < today;
+              const thisMonth = occurrences(p, dateInMonth(month, 1), dateInMonth(month, 31));
+              const status = thisMonth.length ? occurrenceStatus(state, p, thisMonth[0], today) : null;
+              const changes = p.amounts.filter((a) => a.validFrom > today);
+              return (
+                <tr key={p.id} className="click" onClick={() => onEdit(p)} style={ended ? { opacity: 0.55 } : undefined}>
+                  <td>
+                    <button type="button" className="rowbtn" onClick={(e) => { e.stopPropagation(); onEdit(p); }}>{p.name}</button>
+                    {p.payeeId && <div className="small muted">{lk.payeeName(p.payeeId)}</div>}
+                    {changes.map((c) => <div key={c.id} className="change">↳ {t('fromDate', { date: date(c.validFrom) })}: <Amount cents={c.amount} className="change" /></div>)}
+                  </td>
+                  <td><CategoryChip categoryId={p.categoryId ?? state.payees.find((x) => x.id === p.payeeId)?.categoryId} /></td>
+                  <td className="muted">{t(`freq${p.frequency}` as Key)}</td>
+                  <td className="num">{next ? date(next) : '—'}</td>
+                  <td className="small muted">{t('since', { date: date(p.startDate) })}{p.endDate ? ` · ${t('until', { date: date(p.endDate) })}` : ` · ${t('endless')}`}</td>
+                  <td>{ended ? <span className="chip">{t('ended')}</span> : status && <span className={`chip ${status === 'paid' ? 'ok' : status === 'overdue' ? 'warn' : ''}`}>{t(status)}</span>}</td>
+                  <td><Amount cents={amountAt(p, next ?? today)} /></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function BudgetList({ onEdit }: { onEdit: (p: Plan) => void }) {
+  const { state, today } = useData();
+  const { t, money } = useSettings();
+  const plans = state.plans.filter((p) => p.type === 'budget');
+  return (
+    <>
+      <div className="hint">{t('budgetNote')}</div>
+      {!plans.length ? <div className="card empty">{t('noPlans')}</div> : (
+        <div className="budgets">
+          {plans.map((p) => {
+            const cat = state.categories.find((c) => c.id === p.categoryId);
+            const limit = -amountAt(p, today);
+            const spent = cat ? spentInMonth(state, subtree(state.categories, cat.id), monthKey(today)) : 0;
+            const over = spent > limit;
+            return (
+              <button key={p.id} type="button" className="card stack budget-card" onClick={() => onEdit(p)}>
+                <div className="between">
+                  <span className="row strong"><Dot color={cat?.color ?? '#999'} />{cat ? categoryLabel(state.categories, cat) : p.name}</span>
+                  <span className="num muted small">{money(limit, { whole: true })} {t('perMonth')}</span>
+                </div>
+                <div className="prog"><span style={{ width: `${Math.min(100, (Math.max(0, spent) / Math.max(1, limit)) * 100)}%`, background: over ? 'var(--warn)' : cat?.color }} /></div>
+                <div className="between small">
+                  <span className="muted num">{t('spentOf', { a: money(spent), b: money(limit) })}</span>
+                  <span className={`chip ${over ? 'warn' : 'ok'}`}>{over ? t('over', { a: money(spent - limit) }) : t('left', { a: money(limit - spent) })}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
+function OneoffList({ onEdit }: { onEdit: (p: Plan) => void }) {
+  const { state, today } = useData();
+  const { t, date } = useSettings();
+  const plans = state.plans.filter((p) => p.type === 'oneoff')
+    .sort((a, b) => Number(a.status !== 'active') - Number(b.status !== 'active') || a.startDate.localeCompare(b.startDate));
+  if (!plans.length) return <div className="card empty">{t('noPlans')}</div>;
+  return (
+    <section className="card flush">
+      <div className="tbl-wrap">
+        <table className="tbl">
+          <thead><tr><th>{t('dateLabel')}</th><th>{t('name')}</th><th>{t('category')}</th><th>{t('status')}</th><th className="r">{t('amount')}</th></tr></thead>
+          <tbody>
+            {plans.map((p) => {
+              const s = oneoffStatus(p, today);
+              return (
+                <tr key={p.id} className="click" onClick={() => onEdit(p)} style={s === 'done' || s === 'dismissed' ? { opacity: 0.6 } : undefined}>
+                  <td className="num">{date(p.startDate)}</td>
+                  <td><button type="button" className="rowbtn" onClick={(e) => { e.stopPropagation(); onEdit(p); }}>{p.name}</button></td>
+                  <td>{p.categoryId ? <CategoryChip categoryId={p.categoryId} /> : <span className="muted">—</span>}</td>
+                  <td><span className={`chip ${s === 'done' ? 'ok' : s === 'overdue' ? 'warn' : ''}`}>{t(s === 'done' ? 'linked' : s)}</span></td>
+                  <td><Amount cents={amountAt(p, p.startDate)} /></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function PlanForm({ type, plan, onClose }: { type: PlanType; plan?: Plan; onClose: () => void }) {
+  const { state, today, mutate } = useData();
+  const { t, lang, date } = useSettings();
+  const base = plan ? [...plan.amounts].sort((a, b) => a.validFrom.localeCompare(b.validFrom))[0] : undefined;
+  const [f, setF] = useState({
+    name: plan?.name ?? '',
+    payeeId: plan?.payeeId ?? null as number | null,
+    categoryId: plan?.categoryId ?? null as number | null,
+    frequency: plan?.frequency ?? 1,
+    startDate: plan?.startDate ?? (type === 'budget' ? dateInMonth(monthIndex(today), 1) : today),
+    endDate: plan?.endDate ?? '',
+    sign: base ? Math.sign(base.amount) || -1 : -1,
+    amount: base ? formatAmountInput(base.amount, lang) : ''
+  });
+  const [change, setChange] = useState({ validFrom: '', amount: '' });
+  const live = plan && state.plans.find((p) => p.id === plan.id);
+  const changes = live ? [...live.amounts].sort((a, b) => a.validFrom.localeCompare(b.validFrom)).slice(1) : [];
+  const sign = type === 'budget' ? -1 : f.sign;
+
+  const amount = parseAmountInput(f.amount);
+  const valid = amount !== null && !!f.startDate && (type === 'budget' ? !!f.categoryId : !!f.name.trim());
+
+  const save = () => mutate(async () => {
+    const cat = state.categories.find((c) => c.id === f.categoryId);
+    const body = {
+      name: type === 'budget' ? (cat ? categoryLabel(state.categories, cat) : f.name) : f.name,
+      payeeId: f.payeeId, categoryId: f.categoryId, frequency: f.frequency,
+      startDate: f.startDate, endDate: type === 'oneoff' ? null : f.endDate || null, amount: sign * amount!
+    };
+    if (plan) await api('PATCH', `/plans/${plan.id}`, body);
+    else await api('POST', '/plans', { type, ...body });
+  }).then((ok) => ok && onClose());
+
+  const remove = () => {
+    if (plan && confirm(t('confirmDelete'))) void mutate(() => api('DELETE', `/plans/${plan.id}`)).then(onClose);
+  };
+
+  const addChange = () => {
+    const a = parseAmountInput(change.amount);
+    if (!plan || a === null || !change.validFrom) return;
+    void mutate(() => api('POST', `/plans/${plan.id}/amounts`, { validFrom: change.validFrom, amount: sign * a })).then(() => setChange({ validFrom: '', amount: '' }));
+  };
+
+  const title = plan ? `${t('editPlan')}: ${plan.name}` : t(type === 'recurring' ? 'newRecurring' : type === 'budget' ? 'newBudget' : 'newOneoff');
+
+  return (
+    <Modal open title={title} onClose={onClose} footer={
+      <>
+        <div className="row">
+          {plan && <button type="button" className="btn danger" onClick={remove}><Icon name="trash" />{t('delete')}</button>}
+          {plan && type === 'oneoff' && live?.status !== 'done' && (
+            <button type="button" className="btn" onClick={() => mutate(() => api('PATCH', `/plans/${plan.id}`, { status: live?.status === 'dismissed' ? 'active' : 'dismissed' })).then(onClose)}>
+              {t(live?.status === 'dismissed' ? 'reopen' : 'dismissPlan')}
+            </button>
+          )}
+        </div>
+        <div className="row">
+          <button type="button" className="btn" onClick={onClose}>{t('cancel')}</button>
+          <button type="button" className="btn primary" disabled={!valid} onClick={save}>{t('save')}</button>
+        </div>
+      </>
+    }>
+      <div className="form">
+        {type !== 'budget' && <label className="field"><span>{t('name')}</span><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus /></label>}
+        {type === 'budget' ? (
+          <label className="field"><span>{t('budgetCategory')}</span><CategorySelect value={f.categoryId} onChange={(categoryId) => setF({ ...f, categoryId })} allowNone={false} kind="expense" /></label>
+        ) : (
+          <div className="row2">
+            <label className="field"><span>{t('payee')}</span>
+              <select value={f.payeeId ?? ''} onChange={(e) => setF({ ...f, payeeId: e.target.value ? Number(e.target.value) : null })}>
+                <option value="">—</option>
+                {state.payees.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </label>
+            <label className="field"><span>{t('category')}</span><CategorySelect value={f.categoryId} onChange={(categoryId) => setF({ ...f, categoryId })} noneLabel="—" /></label>
+          </div>
+        )}
+        <div className="row2">
+          {type !== 'budget' && (
+            <label className="field"><span>{t('direction')}</span>
+              <select value={f.sign} onChange={(e) => setF({ ...f, sign: Number(e.target.value) })}>
+                <option value={-1}>{t('outgoing')}</option><option value={1}>{t('incoming')}</option>
+              </select>
+            </label>
+          )}
+          <label className="field"><span>{type === 'budget' ? `${t('amount')} (€ ${t('perMonth')})` : `${t('amount')} (€)`}</span>
+            <input inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} />
+          </label>
+          {type === 'recurring' && (
+            <label className="field"><span>{t('frequency')}</span>
+              <select value={f.frequency} onChange={(e) => setF({ ...f, frequency: Number(e.target.value) })}>
+                {[1, 3, 6, 12].map((x) => <option key={x} value={x}>{t(`freq${x}` as Key)}</option>)}
+              </select>
+            </label>
+          )}
+        </div>
+        <div className="row2">
+          <label className="field"><span>{type === 'oneoff' ? t('dateLabel') : t('start')}</span><input type="date" value={f.startDate} onChange={(e) => setF({ ...f, startDate: e.target.value })} /></label>
+          {type !== 'oneoff' && <label className="field"><span>{t('end')} ({t('endless')})</span><input type="date" value={f.endDate} onChange={(e) => setF({ ...f, endDate: e.target.value })} /></label>}
+        </div>
+        {plan && type !== 'oneoff' && (
+          <div className="field">
+            <span>{t('amountChanges')}</span>
+            {changes.map((c) => (
+              <div key={c.id} className="between hint" style={{ fontSize: 13 }}>
+                <span>{t('fromDate', { date: date(c.validFrom) })}: <Amount cents={c.amount} /></span>
+                <button type="button" className="iconbtn" aria-label={t('delete')} onClick={() => mutate(() => api('DELETE', `/plan-amounts/${c.id}`))}><Icon name="trash" size={16} /></button>
+              </div>
+            ))}
+            <div className="row" style={{ alignItems: 'stretch' }}>
+              <input type="date" aria-label={t('validFrom')} value={change.validFrom} onChange={(e) => setChange({ ...change, validFrom: e.target.value })} />
+              <input inputMode="decimal" aria-label={t('amount')} placeholder={t('amount')} value={change.amount} onChange={(e) => setChange({ ...change, amount: e.target.value })} />
+              <button type="button" className="btn" onClick={addChange}>{t('addChange')}</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}

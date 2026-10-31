@@ -1,0 +1,38 @@
+{
+  "name": "finance-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimalistischer, lokaler Finanz-Tracker mit CSV-Import, Kategorien, Planung und Vorhersage.",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx watch src/server/index.ts",
+    "dev:web": "vite",
+    "build": "vite build",
+    "start": "vite build && NODE_ENV=production NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/server/index.ts",
+    "demo": "NODE_OPTIONS=--disable-warning=ExperimentalWarning FT_DB=data/demo.db tsx src/server/seed-demo.ts && vite build && NODE_ENV=production NODE_OPTIONS=--disable-warning=ExperimentalWarning FT_DB=data/demo.db tsx src/server/index.ts",
+    "test": "NODE_OPTIONS=--disable-warning=ExperimentalWarning vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@hono/node-server": "^2.1.5",
+    "hono": "^4.13.14",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^3.2.7"
+  }
+}
