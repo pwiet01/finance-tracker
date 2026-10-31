@@ -224,3 +224,21 @@ dialog.modal::backdrop { background: rgba(10, 10, 12, .45); }
 /* Next to the edit panel the table gives up its minimum width instead of scrolling. */
 .split-main .tbl { min-width: 0; }
 .split-main .tbl .raw { max-width: 240px; }
+
+/* Payee triage */
+.triage { border: 1px solid var(--border); border-radius: 10px; }
+.trow { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.trow:last-child { border-bottom: 0; }
+.trow:focus-within { background: var(--subtle); }
+.trow.done .strong { color: var(--muted); }
+.combo { display: flex; align-items: center; gap: 8px; flex: 0 1 380px; justify-content: flex-end; min-width: 0; }
+.combo-box { position: relative; flex: 0 1 220px; min-width: 140px; }
+.combo-list { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0; min-width: 240px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .12); padding: 4px; }
+.combo-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.combo-item.on { background: var(--accent-soft); color: var(--accent); }
+
+/* Bulk actions */
+.bulkbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; padding: 12px 14px; border-radius: 10px; background: var(--accent-soft); position: sticky; top: 8px; z-index: 10; }
+.bulkbar .field { min-width: 180px; flex: 1 1 180px; }
+.bulkbar .field > div { display: flex; gap: 6px; }
+.group-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding-top: 6px; }

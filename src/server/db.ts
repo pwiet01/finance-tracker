@@ -95,6 +95,9 @@ const MIGRATIONS: ((db: DatabaseSync) => void)[] = [
       const parent = Number(insert.run(name, null, color, kind).lastInsertRowid);
       for (const sub of subs) insert.run(sub, parent, color, kind);
     }
+  },
+  (db) => {
+    db.exec('CREATE TABLE recurring_ignores (key TEXT PRIMARY KEY)');
   }
 ];
 

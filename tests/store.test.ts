@@ -75,4 +75,43 @@ describe('Store', () => {
     store.deleteCategory(food.id);
     expect(store.state().plans).toHaveLength(0);
   });
+
+  it('creates recurring plans with amount history, links and payee category in one go', () => {
+    store.commitImport(sample, 'a.csv');
+    const s = store.state();
+    const [a, b] = s.transactions;
+    const cat = s.categories.find((c) => c.name === 'Streaming')!;
+    const [id] = store.createRecurringPlans([{
+      name: 'Abo', payeeId: a.payeeId, categoryId: cat.id, frequency: 1, startDate: '2026-01-01', endDate: null,
+      amounts: [{ validFrom: '2026-06-01', amount: -1200 }, { validFrom: '2026-01-01', amount: -1000 }],
+      matches: [{ transactionId: a.id, period: '2026-01-01' }, { transactionId: b.id, period: '2026-02-01' }]
+    }]);
+    const after = store.state();
+    const plan = after.plans.find((p) => p.id === id)!;
+    expect(plan.amounts.map((x) => [x.validFrom, x.amount])).toEqual([['2026-01-01', -1000], ['2026-06-01', -1200]]);
+    expect(after.matches.filter((m) => m.planId === id)).toHaveLength(2);
+    expect(after.payees.find((p) => p.id === a.payeeId)?.categoryId).toBe(cat.id);
+  });
+
+  it('remembers ignored recurring suggestions', () => {
+    store.ignoreRecurring('1|-1|1|999');
+    expect(store.state().ignoredRecurring).toEqual(['1|-1|1|999']);
+    store.unignoreRecurring('1|-1|1|999');
+    expect(store.state().ignoredRecurring).toEqual([]);
+  });
+
+  it('saves several rules with one re-resolve and sets categories of several payees', () => {
+    store.commitImport(sample, 'a.csv');
+    const { payeeIds } = store.saveRules([
+      { matchType: 'exact', pattern: 'REWE', name: 'Supermarkt' },
+      { matchType: 'exact', pattern: 'Netto Marken-Discount', name: 'Supermarkt' }
+    ]);
+    expect(new Set(payeeIds).size).toBe(1);
+    const s = store.state();
+    expect(s.payees.some((p) => p.name === 'REWE')).toBe(false);
+    const cat = s.categories.find((c) => c.name === 'Supermarkt')!;
+    const others = s.payees.filter((p) => p.id !== payeeIds[0]).slice(0, 2).map((p) => p.id);
+    store.updatePayees([payeeIds[0], ...others], cat.id);
+    expect(store.state().payees.filter((p) => p.categoryId === cat.id)).toHaveLength(1 + others.length);
+  });
 });

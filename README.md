@@ -24,9 +24,11 @@
 - **Private by design** – one SQLite file, server bound to `127.0.0.1`, no external requests.
 - **CSV import** – bank detected automatically, duplicates skipped, pending bookings ignored. Ships with DKB; other banks plug in as importer modules.
 - **Payee rules** – turn `AMAZON EU S.A R.L., NIEDERLASSUNG…` into *Amazon* (exact / starts with / contains), for past and future imports.
-- **Categories** – two levels; assign a payee once and all its transactions follow.
+- **Categories** – two levels; assign a payee once and all its transactions follow. After an import, uncategorised payees are listed by frequency and assigned by keyboard (type, Enter, next).
 - **Planning** – recurring payments with amount changes, monthly budgets per category and expected one-off payments.
-- **Matching** – bookings are suggested for planned payments; you confirm each link yourself.
+- **Recurring detection** – monthly, quarterly, half-yearly and yearly payments are found in your history, including amount changes and ended contracts; create them all with one click, past bookings linked.
+- **Matching** – bookings are suggested for planned payments; confirm one by one, per plan, or all clear matches at once.
+- **Bulk actions** – select transactions (Shift-click for ranges) to set a category, merge payees, link them to a plan or create a recurring payment from them.
 - **Forecast** – balance for 1 to 36 months, broken down month by month.
 - Light & dark theme, English & German.
 

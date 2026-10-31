@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { resolveRule, ruleMatches } from '../shared/rules';
 import type {
-  AppState, Category, CategoryKind, ImportPreview, ImportResult, MatchType, Payee, PayeeRule, Plan, PlanStatus, PlanType
+  AppState, Category, CategoryKind, ImportPreview, ImportResult, MatchType, Payee, PayeeRule, PlanStatus, PlanType, RecurringPlanInput
 } from '../shared/types';
 import { detectImporter, type Importer, type ParsedRow } from './importers';
 
@@ -11,6 +11,14 @@ export class HttpError extends Error {
 }
 
 type Row = Record<string, any>;
+
+export interface RuleInput {
+  id?: number;
+  matchType: MatchType;
+  pattern: string;
+  name: string;
+  categoryId?: number | null;
+}
 
 export interface PlanInput {
   type: PlanType;
@@ -65,6 +73,7 @@ export class Store {
       })),
       matches: this.all('SELECT * FROM plan_matches').map((r) => ({ id: r.id, planId: r.plan_id, transactionId: r.transaction_id, period: r.period })),
       dismissals: this.all('SELECT * FROM dismissals').map((r) => ({ planId: r.plan_id, transactionId: r.transaction_id })),
+      ignoredRecurring: this.all('SELECT key FROM recurring_ignores ORDER BY key').map((r) => r.key as string),
       balance: balance ? { date: balance.date, amount: balance.amount } : null
     };
   }
@@ -166,22 +175,36 @@ export class Store {
       AND id NOT IN (SELECT payee_id FROM payee_rules) AND id NOT IN (SELECT payee_id FROM plans WHERE payee_id IS NOT NULL)`);
   }
 
-  saveRule(input: { id?: number; matchType: MatchType; pattern: string; name: string; categoryId?: number | null }): { payeeId: number } {
-    const pattern = input.pattern.trim();
-    if (!pattern) throw new HttpError(400, 'pattern_required');
+  saveRule(input: RuleInput): { payeeId: number } {
     return this.tx(() => {
-      const payeeId = this.ensurePayee(input.name);
-      if (input.categoryId !== undefined) this.run('UPDATE payees SET category_id = ? WHERE id = ?', input.categoryId, payeeId);
-      if (input.id) this.run('DELETE FROM payee_rules WHERE id = ?', input.id);
-      this.run(`INSERT INTO payee_rules (match_type, pattern, payee_id, auto) VALUES (?, ?, ?, 0)
-        ON CONFLICT(match_type, pattern) DO UPDATE SET payee_id = excluded.payee_id, auto = 0`, input.matchType, pattern, payeeId);
-      // Automatic rules covered by the new rule would otherwise keep the old names alive.
-      for (const r of this.rules().filter((r) => r.auto && ruleMatches(input.matchType, pattern, r.pattern))) {
-        this.run('DELETE FROM payee_rules WHERE id = ?', r.id);
-      }
+      const payeeId = this.writeRule(input);
       this.reresolve();
       return { payeeId };
     });
+  }
+
+  /** Several rules at once, e.g. to merge many raw names into one payee; resolves only once. */
+  saveRules(list: RuleInput[]): { payeeIds: number[] } {
+    return this.tx(() => {
+      const payeeIds = list.map((r) => this.writeRule(r));
+      this.reresolve();
+      return { payeeIds };
+    });
+  }
+
+  private writeRule(input: RuleInput): number {
+    const pattern = input.pattern.trim();
+    if (!pattern) throw new HttpError(400, 'pattern_required');
+    const payeeId = this.ensurePayee(input.name);
+    if (input.categoryId !== undefined) this.run('UPDATE payees SET category_id = ? WHERE id = ?', input.categoryId, payeeId);
+    if (input.id) this.run('DELETE FROM payee_rules WHERE id = ?', input.id);
+    this.run(`INSERT INTO payee_rules (match_type, pattern, payee_id, auto) VALUES (?, ?, ?, 0)
+      ON CONFLICT(match_type, pattern) DO UPDATE SET payee_id = excluded.payee_id, auto = 0`, input.matchType, pattern, payeeId);
+    // Automatic rules covered by the new rule would otherwise keep the old names alive.
+    for (const r of this.rules().filter((r) => r.auto && ruleMatches(input.matchType, pattern, r.pattern))) {
+      this.run('DELETE FROM payee_rules WHERE id = ?', r.id);
+    }
+    return payeeId;
   }
 
   deleteRule(id: number) {
@@ -206,6 +229,13 @@ export class Store {
         this.run(`UPDATE ${table} SET payee_id = ? WHERE payee_id = ?`, other.id, id);
       }
       this.run('DELETE FROM payees WHERE id = ?', id);
+    });
+  }
+
+  /** Sets the category of several payees at once. */
+  updatePayees(ids: number[], categoryId: number | null) {
+    this.tx(() => {
+      for (const id of ids) this.run('UPDATE payees SET category_id = ? WHERE id = ?', categoryId, id);
     });
   }
 
@@ -245,13 +275,16 @@ export class Store {
   createPlan(input: PlanInput): number {
     if (input.type === 'budget' && !input.categoryId) throw new HttpError(400, 'budget_needs_category');
     if (!input.name?.trim()) throw new HttpError(400, 'name_required');
-    return this.tx(() => {
-      const id = Number(this.run(`INSERT INTO plans (type, name, payee_id, category_id, frequency, start_date, end_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`, input.type, input.name.trim(), input.payeeId ?? null, input.categoryId ?? null,
-        input.frequency ?? 1, input.startDate, input.endDate ?? null).lastInsertRowid);
-      this.run('INSERT INTO plan_amounts (plan_id, valid_from, amount) VALUES (?, ?, ?)', id, input.startDate, input.amount);
-      return id;
-    });
+    return this.tx(() => this.createPlanRow(input));
+  }
+
+  private createPlanRow(input: PlanInput): number {
+    if (!input.name?.trim()) throw new HttpError(400, 'name_required');
+    const id = Number(this.run(`INSERT INTO plans (type, name, payee_id, category_id, frequency, start_date, end_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`, input.type, input.name.trim(), input.payeeId ?? null, input.categoryId ?? null,
+      input.frequency ?? 1, input.startDate, input.endDate ?? null).lastInsertRowid);
+    this.run('INSERT INTO plan_amounts (plan_id, valid_from, amount) VALUES (?, ?, ?)', id, input.startDate, input.amount);
+    return id;
   }
 
   updatePlan(id: number, input: Partial<Omit<PlanInput, 'type' | 'amount'>> & { status?: PlanStatus; amount?: number }) {
@@ -274,6 +307,28 @@ export class Store {
       }
     });
   }
+
+  /**
+   * Creates recurring plans with their amount history and links past bookings in one go.
+   * A payee without category takes over the plan's category.
+   */
+  createRecurringPlans(list: RecurringPlanInput[]): number[] {
+    return this.tx(() => list.map((input) => {
+      if (!input.amounts.length) throw new HttpError(400, 'amount_required');
+      const [first, ...changes] = [...input.amounts].sort((a, b) => a.validFrom.localeCompare(b.validFrom));
+      const id = this.createPlanRow({ ...input, type: 'recurring', startDate: input.startDate, amount: first.amount });
+      for (const a of changes) this.addPlanAmount(id, a.validFrom, a.amount);
+      for (const m of input.matches) {
+        this.run(`INSERT INTO plan_matches (plan_id, transaction_id, period) VALUES (?, ?, ?)
+          ON CONFLICT(transaction_id) DO UPDATE SET plan_id = excluded.plan_id, period = excluded.period`, id, m.transactionId, m.period);
+      }
+      if (input.categoryId) this.run('UPDATE payees SET category_id = ? WHERE id = ? AND category_id IS NULL', input.categoryId, input.payeeId);
+      return id;
+    }));
+  }
+
+  ignoreRecurring(key: string) { this.run('INSERT OR IGNORE INTO recurring_ignores (key) VALUES (?)', key); }
+  unignoreRecurring(key: string) { this.run('DELETE FROM recurring_ignores WHERE key = ?', key); }
 
   deletePlan(id: number) { this.run('DELETE FROM plans WHERE id = ?', id); }
 

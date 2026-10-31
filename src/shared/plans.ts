@@ -1,4 +1,4 @@
-import { dateInMonth, dayDiff, monthIndex, parts } from './dates';
+import { addDays, dateInMonth, dayDiff, monthIndex, parts } from './dates';
 import type { AppState, Category, Plan } from './types';
 
 /** Amount valid on the given date: the latest change on or before it, else the first one. */
@@ -25,6 +25,14 @@ export function occurrences(plan: Plan, from: string, to: string): string[] {
     out.push(d);
   }
   return out;
+}
+
+/** The occurrence of a plan a booking settles: the nearest due date, else the booking date. */
+export function periodFor(plan: Plan, date: string): string {
+  if (plan.type !== 'recurring') return plan.startDate;
+  const window = Math.max(20, plan.frequency * 10);
+  const dates = occurrences(plan, addDays(date, -window), addDays(date, window));
+  return dates.reduce<string | null>((best, d) => (!best || Math.abs(dayDiff(date, d)) < Math.abs(dayDiff(date, best)) ? d : best), null) ?? date;
 }
 
 export function nextOccurrence(plan: Plan, after: string): string | null {

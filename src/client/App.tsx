@@ -11,6 +11,7 @@ import { OverviewPage } from './pages/Overview';
 import { PlanningPage } from './pages/Planning';
 import { TransactionsPage } from './pages/Transactions';
 import { useRoute } from './router';
+import { PayeeTriage } from './components/PayeeTriage';
 import { SettingsProvider, useSettings, type Theme } from './settings';
 
 export function App() {
@@ -90,6 +91,12 @@ function Shell() {
         {page === 'forecast' && <ForecastPage />}
         {page === 'categories' && <CategoriesPage />}
         {page === 'import' && <ImportPage />}
+        {page === 'categorize' && (
+          <>
+            <div className="head"><h1 className="h1">{t('categorize')}</h1></div>
+            <PayeeTriage />
+          </>
+        )}
       </main>
     </div>
   );

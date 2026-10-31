@@ -1,22 +1,18 @@
-import { useMemo, useState } from 'react';
-import { addDays, dayDiff, monthKey } from '../../shared/dates';
+import { useMemo, useState, type MouseEvent } from 'react';
+import { monthKey } from '../../shared/dates';
 import { historyCandidates } from '../../shared/matching';
-import { occurrences, subtree } from '../../shared/plans';
+import { periodFor, subtree } from '../../shared/plans';
+import { buildSeries } from '../../shared/recurring';
 import { resolveRule, ruleMatches } from '../../shared/rules';
 import type { MatchType, Plan, Transaction } from '../../shared/types';
+import { toPlanInput } from '../components/RecurringSuggestions';
 import { Amount, CategoryChip, CategorySelect, Icon, formatAmountInput, parseAmountInput } from '../components/ui';
+import type { Key } from '../i18n';
 import { api, useData } from '../data';
 import { navigate } from '../router';
 import { useSettings } from '../settings';
 
 const PAGE = 150;
-
-/** The occurrence of a plan a booking settles: the nearest due date, else the booking date. */
-export function periodFor(plan: Plan, date: string): string {
-  if (plan.type !== 'recurring') return plan.startDate;
-  const dates = occurrences(plan, addDays(date, -20), addDays(date, 20));
-  return dates.reduce<string | null>((best, d) => (!best || Math.abs(dayDiff(date, d)) < Math.abs(dayDiff(date, best)) ? d : best), null) ?? date;
-}
 
 export function TransactionsPage({ query }: { query: URLSearchParams }) {
   const { state, lk } = useData();
@@ -25,6 +21,9 @@ export function TransactionsPage({ query }: { query: URLSearchParams }) {
   const [limit, setLimit] = useState(PAGE);
   const cat = query.get('cat') ?? '';
   const month = query.get('month') ?? '';
+  const link = query.get('link') ?? '';
+  const [sel, setSel] = useState<Set<number>>(new Set());
+  const [anchor, setAnchor] = useState<number | null>(null);
   const selId = Number(query.get('tx')) || null;
   const matched = useMemo(() => new Set(state.matches.map((m) => m.transactionId)), [state.matches]);
 
@@ -43,10 +42,26 @@ export function TransactionsPage({ query }: { query: URLSearchParams }) {
       if (cat === 'none' && c) return false;
       if (ids && (!c || !ids.has(c.id))) return false;
       if (month && monthKey(tx.date) !== month) return false;
+      if (link && (link === 'yes') !== matched.has(tx.id)) return false;
       if (needle && !`${lk.payeeName(tx.payeeId)} ${tx.rawPayee} ${tx.purpose}`.toLowerCase().includes(needle)) return false;
       return true;
     });
-  }, [state, lk, q, cat, month]);
+  }, [state, lk, q, cat, month, link, matched]);
+  const chosen = state.transactions.filter((tx) => sel.has(tx.id));
+  const allSelected = filtered.length > 0 && filtered.every((tx) => sel.has(tx.id));
+
+  /** Shift-click selects the range from the last clicked row in the current order. */
+  const toggle = (e: MouseEvent, id: number) => {
+    e.stopPropagation();
+    const next = new Set(sel);
+    const on = !sel.has(id);
+    const i = filtered.findIndex((tx) => tx.id === id);
+    const j = anchor === null ? -1 : filtered.findIndex((tx) => tx.id === anchor);
+    const range = e.shiftKey && j >= 0 ? filtered.slice(Math.min(i, j), Math.max(i, j) + 1) : [filtered[i]];
+    for (const tx of range) if (on) next.add(tx.id); else next.delete(tx.id);
+    setSel(next);
+    setAnchor(id);
+  };
   const selected = state.transactions.find((tx) => tx.id === selId);
 
   return (
@@ -75,19 +90,28 @@ export function TransactionsPage({ query }: { query: URLSearchParams }) {
             {months.map((m) => <option key={m} value={m}>{monthLabel(m, 'longYear')}</option>)}
           </select>
         </label>
+        <label className="field"><span>{t('linkFilter')}</span>
+          <select value={link} onChange={(e) => setParam('link', e.target.value)}>
+            <option value="">{t('allLinks')}</option>
+            <option value="yes">{t('onlyLinked')}</option>
+            <option value="no">{t('onlyUnlinked')}</option>
+          </select>
+        </label>
       </div>
+      {sel.size > 0 && <BulkBar txs={chosen} onClear={() => setSel(new Set())} />}
       <div className="split">
         <section className="card flush split-main">
           {filtered.length === 0 ? <div className="empty">{t('noResults')}</div> : (
             <div className="tbl-wrap">
               <table className="tbl">
-                <thead><tr><th>{t('date')}</th><th>{t('payee')}</th><th>{t('category')}</th><th className="r">{t('amount')}</th></tr></thead>
+                <thead><tr><th style={{ width: 28 }}><input type="checkbox" aria-label={t('selectAllTx')} checked={allSelected} onChange={() => setSel(allSelected ? new Set() : new Set(filtered.map((tx) => tx.id)))} /></th><th>{t('date')}</th><th>{t('payee')}</th><th>{t('category')}</th><th className="r">{t('amount')}</th></tr></thead>
                 <tbody>
                   {filtered.slice(0, limit).map((tx) => {
                     const name = lk.payeeName(tx.payeeId);
                     const open = () => setParam('tx', String(tx.id));
                     return (
-                      <tr key={tx.id} className={`click ${tx.id === selId ? 'sel' : ''}`} onClick={open}>
+                      <tr key={tx.id} className={`click ${tx.id === selId || sel.has(tx.id) ? 'sel' : ''}`} onClick={open}>
+                        <td onClick={(e) => toggle(e, tx.id)}><input type="checkbox" aria-label={name} checked={sel.has(tx.id)} readOnly /></td>
                         <td className="num muted" style={{ whiteSpace: 'nowrap' }}>{date(tx.date)}</td>
                         <td>
                           <button type="button" className="rowbtn" onClick={(e) => { e.stopPropagation(); open(); }}>
@@ -109,6 +133,72 @@ export function TransactionsPage({ query }: { query: URLSearchParams }) {
         {selected && <TransactionPanel key={selected.id} tx={selected} onClose={() => setParam('tx', null)} />}
       </div>
     </>
+  );
+}
+
+/** Actions for many bookings at once. Categories live on payees, so they change for every booking of those payees. */
+function BulkBar({ txs, onClear }: { txs: Transaction[]; onClear: () => void }) {
+  const { state, today, lk, mutate } = useData();
+  const { t, money, date } = useSettings();
+  const payeeIds = [...new Set(txs.map((tx) => tx.payeeId))];
+  const raws = [...new Set(txs.map((tx) => tx.rawPayee))];
+  const [categoryId, setCategoryId] = useState<number | null>(null);
+  const [name, setName] = useState('');
+  const [planId, setPlanId] = useState<number | null>(null);
+  const linkable = state.plans.filter((p) => p.status === 'active' && (p.type === 'recurring' || p.type === 'oneoff'));
+  const oneSeries = payeeIds.length === 1 && new Set(txs.map((tx) => Math.sign(tx.amount))).size === 1;
+  const series = useMemo(() => (oneSeries ? buildSeries(txs, today) : null), [oneSeries, txs, today]);
+  const done = (ok: boolean) => { if (ok) onClear(); };
+
+  const setCategory = () => mutate(() => api('PATCH', '/payees', { ids: payeeIds, categoryId })).then(done);
+  const rename = () => mutate(() => api('POST', '/rules/bulk', raws.map((raw) => ({ matchType: 'exact', pattern: raw, name: name.trim() })))).then(done);
+  const linkPlan = () => {
+    const plan = linkable.find((p) => p.id === planId);
+    if (!plan) return;
+    void mutate(() => api('POST', '/matches', txs.map((tx) => ({ planId: plan.id, transactionId: tx.id, period: periodFor(plan, tx.date) })))).then(done);
+  };
+  const createRecurring = () => {
+    if (!series) return;
+    const payee = state.payees.find((p) => p.id === series.payeeId);
+    void mutate(() => api('POST', '/plans/recurring', [toPlanInput(series, lk.payeeName(series.payeeId), payee?.categoryId ?? null)])).then(done);
+  };
+
+  return (
+    <div className="bulkbar">
+      <div className="stack" style={{ gap: 4 }}>
+        <span className="strong">{t('selectedN', { n: txs.length })}</span>
+        <button type="button" className="link small" onClick={onClear}>{t('clearSel')}</button>
+      </div>
+      <div className="field"><span>{t('bulkCategory')}</span>
+        <div><CategorySelect value={categoryId} onChange={setCategoryId} /><button type="button" className="btn" onClick={setCategory}>{t('apply')}</button></div>
+        <span className="small muted">{t('bulkCatHint', { n: payeeIds.length })}</span>
+      </div>
+      <div className="field"><span>{t('bulkRename')}</span>
+        <div><input value={name} placeholder={lk.payeeName(payeeIds[0])} onChange={(e) => setName(e.target.value)} /><button type="button" className="btn" disabled={!name.trim()} onClick={rename}>{t('apply')}</button></div>
+        <span className="small muted">{t('bulkRenameHint', { n: raws.length })}</span>
+      </div>
+      {linkable.length > 0 && (
+        <div className="field"><span>{t('bulkLink')}</span>
+          <div>
+            <select value={planId ?? ''} onChange={(e) => setPlanId(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">{t('choosePlan')}</option>
+              {linkable.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <button type="button" className="btn" disabled={!planId} onClick={linkPlan}>{t('apply')}</button>
+          </div>
+        </div>
+      )}
+      <div className="field"><span>{t('bulkRecurring')}</span>
+        {!oneSeries ? <span className="small muted">{t('bulkRecurringOnly')}</span>
+          : !series ? <span className="small muted">{t('bulkRecurringFail')}</span>
+          : (
+            <div style={{ alignItems: 'center' }}>
+              <span className="small">{t(`freq${series.frequency}` as Key)} · {money(series.amounts[series.amounts.length - 1].amount, { signed: true })} · {t('since', { date: date(series.startDate) })}</span>
+              <button type="button" className="btn primary" onClick={createRecurring}>{t('apply')}</button>
+            </div>
+          )}
+      </div>
+    </div>
   );
 }
 

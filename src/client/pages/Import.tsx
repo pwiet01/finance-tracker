@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { ImportPreview, ImportResult } from '../../shared/types';
 import { MatchList } from '../components/MatchList';
+import { PayeeTriage } from '../components/PayeeTriage';
+import { RecurringSuggestions } from '../components/RecurringSuggestions';
 import { Amount, Icon } from '../components/ui';
 import { api, useData } from '../data';
 import { navigate } from '../router';
@@ -19,7 +21,7 @@ async function readText(file: File): Promise<string> {
 export function ImportPage() {
   const { state, mutate } = useData();
   const { t, money, date } = useSettings();
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [file, setFile] = useState<{ name: string; content: string } | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
@@ -47,7 +49,7 @@ export function ImportPage() {
   }).then((ok) => ok && setStep(3));
 
   const count = (s: string) => preview?.rows.filter((r) => r.status === s).length ?? 0;
-  const steps = [t('step1'), t('step2'), t('step3')];
+  const steps = [t('step1'), t('step2'), t('stepSort'), t('stepRecurring'), t('step3')];
 
   return (
     <>
@@ -110,14 +112,12 @@ export function ImportPage() {
         </>
       )}
 
-      {step === 3 && result && (
-        <>
-          <div className="banner info">{t('imported', { n: result.inserted })}</div>
-          {state.plans.length > 0
-            ? <MatchList transactionIds={result.transactionIds} onDone={() => navigate('/transactions')} />
-            : <div><a className="btn primary" href="#/transactions">{t('toTransactions')}</a></div>}
-        </>
-      )}
+      {step >= 3 && result && <div className="banner info">{t('imported', { n: result.inserted })}</div>}
+      {step === 3 && result && <PayeeTriage transactionIds={result.transactionIds} onDone={() => setStep(4)} />}
+      {step === 4 && result && <RecurringSuggestions transactionIds={result.transactionIds} onDone={() => setStep(5)} />}
+      {step === 5 && result && (state.plans.length > 0
+        ? <MatchList transactionIds={result.transactionIds} onDone={() => navigate('/transactions')} />
+        : <div><a className="btn primary" href="#/transactions">{t('toTransactions')}</a></div>)}
     </>
   );
 }

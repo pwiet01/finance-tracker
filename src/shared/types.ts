@@ -91,7 +91,20 @@ export interface AppState {
   plans: Plan[];
   matches: PlanMatch[];
   dismissals: Dismissal[];
+  /** Keys of recurring-payment suggestions the user chose to ignore. */
+  ignoredRecurring: string[];
   balance: Balance | null;
+}
+
+export interface RecurringPlanInput {
+  name: string;
+  payeeId: number;
+  categoryId: number | null;
+  frequency: number;
+  startDate: string;
+  endDate: string | null;
+  amounts: { validFrom: string; amount: number }[];
+  matches: { transactionId: number; period: string }[];
 }
 
 export interface ImportPreviewRow {

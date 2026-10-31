@@ -5,6 +5,8 @@ import { amountAt, nextOccurrence, occurrenceStatus, occurrences, oneoffStatus, 
 import { spentInMonth } from '../../shared/stats';
 import type { Plan, PlanType } from '../../shared/types';
 import { MatchList } from '../components/MatchList';
+import { RecurringSuggestions } from '../components/RecurringSuggestions';
+import { detectRecurring } from '../../shared/recurring';
 import { Amount, CategoryChip, CategorySelect, Dot, Icon, Modal, categoryLabel, formatAmountInput, parseAmountInput } from '../components/ui';
 import { api, useData } from '../data';
 import type { Key } from '../i18n';
@@ -15,15 +17,18 @@ const TABS: { id: string; type?: PlanType; label: Key; create?: Key }[] = [
   { id: 'recurring', type: 'recurring', label: 'tabRecurring', create: 'newRecurring' },
   { id: 'budgets', type: 'budget', label: 'tabBudgets', create: 'newBudget' },
   { id: 'oneoff', type: 'oneoff', label: 'tabOneoff', create: 'newOneoff' },
+  { id: 'detected', label: 'tabDetected' },
   { id: 'matching', label: 'tabMatching' }
 ];
 
 export function PlanningPage({ tab = 'recurring' }: { tab?: string }) {
-  const { state } = useData();
+  const { state, today } = useData();
   const { t } = useSettings();
   const current = TABS.find((x) => x.id === tab) ?? TABS[0];
   const [editing, setEditing] = useState<{ type: PlanType; plan?: Plan } | null>(null);
   const suggestions = useMemo(() => suggestMatches(state).length, [state]);
+  const detected = useMemo(() => detectRecurring(state, today).length, [state, today]);
+  const badge: Record<string, number> = { matching: suggestions, detected };
 
   return (
     <>
@@ -34,13 +39,14 @@ export function PlanningPage({ tab = 'recurring' }: { tab?: string }) {
       <div className="tabs" role="tablist">
         {TABS.map((x) => (
           <button key={x.id} type="button" role="tab" aria-selected={x.id === current.id} className={`tab ${x.id === current.id ? 'on' : ''}`} onClick={() => navigate(`/planning/${x.id}`)}>
-            {t(x.label)}{x.id === 'matching' && suggestions > 0 && <span className="chip warn">{suggestions}</span>}
+            {t(x.label)}{badge[x.id] > 0 && <span className="chip warn">{badge[x.id]}</span>}
           </button>
         ))}
       </div>
       {current.id === 'recurring' && <RecurringList onEdit={(plan) => setEditing({ type: 'recurring', plan })} />}
       {current.id === 'budgets' && <BudgetList onEdit={(plan) => setEditing({ type: 'budget', plan })} />}
       {current.id === 'oneoff' && <OneoffList onEdit={(plan) => setEditing({ type: 'oneoff', plan })} />}
+      {current.id === 'detected' && <RecurringSuggestions />}
       {current.id === 'matching' && <MatchList />}
       {editing && <PlanForm type={editing.type} plan={editing.plan} onClose={() => setEditing(null)} />}
     </>

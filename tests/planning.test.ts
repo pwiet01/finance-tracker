@@ -13,7 +13,7 @@ const tx = (id: number, date: string, amount: number, payeeId = 1): Transaction 
 });
 const state = (s: Partial<AppState>): AppState => ({
   categories: [], payees: [{ id: 1, name: 'Vermieter', categoryId: null }], rules: [], transactions: [], plans: [], matches: [],
-  dismissals: [], balance: null, ...s
+  dismissals: [], ignoredRecurring: [], balance: null, ...s
 });
 
 describe('plans', () => {

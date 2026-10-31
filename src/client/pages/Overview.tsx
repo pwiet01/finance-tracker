@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { dateInMonth, monthIndex } from '../../shared/dates';
 import { suggestMatches } from '../../shared/matching';
 import { amountAt, budgetActive, subtree } from '../../shared/plans';
+import { detectRecurring } from '../../shared/recurring';
 import { monthlySummaries, recentMonths } from '../../shared/stats';
 import { StackedBars } from '../components/charts';
 import { Dot, Icon } from '../components/ui';
@@ -31,6 +32,7 @@ export function OverviewPage() {
   const total = [...sum.byCategory.values()].reduce((a, b) => a + Math.max(0, b), 0);
   const uncategorized = state.transactions.filter((tx) => !state.payees.find((p) => p.id === tx.payeeId)?.categoryId).length;
   const suggestions = useMemo(() => suggestMatches(state).length, [state]);
+  const detected = useMemo(() => detectRecurring(state, today).length, [state, today]);
 
   if (!state.transactions.length) {
     return (
@@ -72,7 +74,13 @@ export function OverviewPage() {
       {uncategorized > 0 && (
         <div className="banner">
           <span>{t('toAssign', { n: uncategorized })}</span>
-          <a className="link" href="#/transactions?cat=none">{t('assignNow')}</a>
+          <a className="link" href="#/categorize">{t('assignNow')}</a>
+        </div>
+      )}
+      {detected > 0 && (
+        <div className="banner info">
+          <span>{t('detBanner', { n: detected })}</span>
+          <a className="link" href="#/planning/detected">{t('review')}</a>
         </div>
       )}
       {suggestions > 0 && (

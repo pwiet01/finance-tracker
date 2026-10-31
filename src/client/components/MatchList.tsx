@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { suggestMatches, type MatchSuggestion } from '../../shared/matching';
+import { amountAt } from '../../shared/plans';
 import { api, useData } from '../data';
 import { useSettings } from '../settings';
 import { Amount } from './ui';
@@ -13,38 +14,64 @@ type Decision = 'linked' | 'rejected';
 export function MatchList({ transactionIds, onDone }: { transactionIds?: number[]; onDone?: () => void }) {
   const { state, lk, mutate } = useData();
   const { t, money, date, pct } = useSettings();
-  const [items] = useState<MatchSuggestion[]>(() => suggestMatches(state, transactionIds));
+  // Grouped by plan, oldest first, so a whole series can be confirmed at once.
+  const [items] = useState<MatchSuggestion[]>(() => suggestMatches(state, transactionIds)
+    .sort((a, b) => a.planId - b.planId || a.period.localeCompare(b.period)));
   const [decisions, setDecisions] = useState<Record<number, Decision>>({});
   const [amountChange, setAmountChange] = useState<Record<number, boolean>>({});
 
   if (!items.length) return <div className="card empty">{t('noMatches')}</div>;
   const decided = items.filter((s) => decisions[s.transactionId]).length;
 
-  const decide = (s: MatchSuggestion, d: Decision | null) => mutate(async () => {
-    const prev = decisions[s.transactionId];
-    if (prev === 'linked') {
-      const m = state.matches.find((x) => x.transactionId === s.transactionId);
-      if (m) await api('DELETE', `/matches/${m.id}`);
-    }
-    if (prev === 'rejected') await api('DELETE', '/dismissals', { planId: s.planId, transactionId: s.transactionId });
-    if (d === 'linked') {
-      await api('POST', '/matches', [{ planId: s.planId, transactionId: s.transactionId, period: s.period }]);
+  const decide = (s: MatchSuggestion, d: Decision | null) => {
+    if (d === 'linked' && !decisions[s.transactionId]) return linkMany([s]);
+    return mutate(async () => {
+      const prev = decisions[s.transactionId];
+      if (prev === 'linked') {
+        const m = state.matches.find((x) => x.transactionId === s.transactionId);
+        if (m) await api('DELETE', `/matches/${m.id}`);
+      }
+      if (prev === 'rejected') await api('DELETE', '/dismissals', { planId: s.planId, transactionId: s.transactionId });
+      if (d === 'linked') await linkCalls([s]);
+      if (d === 'rejected') await api('POST', '/dismissals', { planId: s.planId, transactionId: s.transactionId });
+    }).then((ok) => ok && setDecisions((x) => {
+      const next = { ...x };
+      if (d) next[s.transactionId] = d; else delete next[s.transactionId];
+      return next;
+    }));
+  };
+
+  /** Links bookings in one request; amount changes are only added where the amount really moves. */
+  const linkCalls = async (list: MatchSuggestion[]) => {
+    await api('POST', '/matches', list.map((s) => ({ planId: s.planId, transactionId: s.transactionId, period: s.period })));
+    const current = new Map<number, { period: string; amount: number }[]>();
+    for (const s of [...list].sort((a, b) => a.period.localeCompare(b.period))) {
+      if (!hasChange(s) || amountChange[s.transactionId] === false) continue;
+      const plan = state.plans.find((p) => p.id === s.planId)!;
       const tx = state.transactions.find((x) => x.id === s.transactionId)!;
-      if (hasChange(s) && amountChange[s.transactionId] !== false) await api('POST', `/plans/${s.planId}/amounts`, { validFrom: s.period, amount: tx.amount });
+      const added = current.get(plan.id) ?? [];
+      const latest = added.filter((a) => a.period <= s.period).pop();
+      if ((latest?.amount ?? amountAt(plan, s.period)) === tx.amount) continue;
+      await api('POST', `/plans/${s.planId}/amounts`, { validFrom: s.period, amount: tx.amount });
+      current.set(plan.id, [...added, { period: s.period, amount: tx.amount }]);
     }
-    if (d === 'rejected') await api('POST', '/dismissals', { planId: s.planId, transactionId: s.transactionId });
-  }).then((ok) => ok && setDecisions((x) => {
-    const next = { ...x };
-    if (d) next[s.transactionId] = d; else delete next[s.transactionId];
-    return next;
-  }));
+  };
+
+  const linkMany = (list: MatchSuggestion[]) => mutate(() => linkCalls(list))
+    .then((ok) => ok && setDecisions((x) => ({ ...x, ...Object.fromEntries(list.map((s) => [s.transactionId, 'linked' as Decision])) })));
+
+  const open = items.filter((s) => !decisions[s.transactionId]);
+  const clear = open.filter((s) => s.amountDiff < 0.005 && Math.abs(s.dayDiff) <= 3);
 
   const hasChange = (s: MatchSuggestion) => state.plans.find((p) => p.id === s.planId)?.type === 'recurring' && s.amountDiff >= 0.005;
 
   return (
     <div className="stack">
-      <div className="muted">{t('matchIntro')}</div>
-      {items.map((s) => {
+      <div className="between">
+        <span className="muted">{t('matchIntro')}</span>
+        {clear.length > 0 && <button type="button" className="btn primary" title={t('acceptExactHint')} onClick={() => linkMany(clear)}>{t('acceptExact', { n: clear.length })}</button>}
+      </div>
+      {items.map((s, i) => {
         const tx = state.transactions.find((x) => x.id === s.transactionId);
         const plan = state.plans.find((p) => p.id === s.planId);
         if (!tx || !plan) return null;
@@ -53,8 +80,17 @@ export function MatchList({ transactionIds, onDone }: { transactionIds?: number[
           s.amountDiff >= 0.005 ? t('diffAmt', { p: pct(s.amountDiff) }) : '',
           s.dayDiff > 0 ? t('diffDays', { d: s.dayDiff }) : s.dayDiff < 0 ? t('diffDaysBefore', { d: -s.dayDiff }) : ''
         ].filter(Boolean);
+        const groupOpen = open.filter((x) => x.planId === plan.id);
+        const head = i === 0 || items[i - 1].planId !== plan.id;
         return (
-          <section key={s.transactionId} className="card">
+          <Fragment key={s.transactionId}>
+          {head && (
+            <div className="group-head">
+              <span className="h2">{plan.name} <span className="small muted">· {items.filter((x) => x.planId === plan.id).length}</span></span>
+              {groupOpen.length > 1 && <button type="button" className="btn sm" onClick={() => linkMany(groupOpen)}>{t('linkGroup', { n: groupOpen.length })}</button>}
+            </div>
+          )}
+          <section className="card">
             <div className="match">
               <div className="mbox">
                 <span className="small muted">{t('booked')}</span>
@@ -92,6 +128,7 @@ export function MatchList({ transactionIds, onDone }: { transactionIds?: number[
               </label>
             )}
           </section>
+          </Fragment>
         );
       })}
       <div className="between">
