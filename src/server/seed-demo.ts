@@ -93,7 +93,7 @@ const rules: [('exact' | 'starts' | 'contains'), string, string, string][] = [
   ['exact', 'CAFE LINDENBLATT', 'Café Lindenblatt', 'Lebensmittel › Bäckerei & Café'],
   ['exact', 'Baeckerei Kraus', 'Bäckerei Kraus', 'Lebensmittel › Bäckerei & Café'],
   ['contains', 'GOOGLE.ONE', 'Google One', 'Abos & Verträge › Cloud & Software'],
-  ['exact', 'Hausverwaltung Beispiel KG', 'Vermieter', 'Wohnen › Miete'],
+  ['exact', 'Hausverwaltung Beispiel KG', 'Landlord', 'Wohnen › Miete'],
   ['starts', 'Stadtwerke', 'Stadtwerke', 'Wohnen › Strom & Gas'],
   ['starts', 'Vodafone', 'Vodafone', 'Wohnen › Internet & Telefon'],
   ['exact', 'DB Vertrieb GmbH', 'Deutschlandticket', 'Mobilität › ÖPNV'],
@@ -101,14 +101,14 @@ const rules: [('exact' | 'starts' | 'contains'), string, string, string][] = [
   ['exact', 'Muster GmbH', 'Muster GmbH', 'Einnahmen › Gehalt'],
   ['starts', 'FITNESSPARK', 'Fitnesspark', 'Freizeit › Sport'],
   ['starts', 'STREAMLY', 'Streamly', 'Abos & Verträge › Streaming'],
-  ['starts', 'Mobilfunk Beispiel', 'Mobilfunk', 'Wohnen › Internet & Telefon'],
-  ['contains', 'Beitragsservice', 'Rundfunkbeitrag', 'Abos & Verträge › Gebühren'],
-  ['starts', 'Beispiel Versicherung', 'Haftpflicht', 'Abos & Verträge › Versicherungen'],
+  ['starts', 'Mobilfunk Beispiel', 'Mobile plan', 'Wohnen › Internet & Telefon'],
+  ['contains', 'Beitragsservice', 'TV licence', 'Abos & Verträge › Gebühren'],
+  ['starts', 'Beispiel Versicherung', 'Liability insurance', 'Abos & Verträge › Versicherungen'],
   ['exact', 'MODEHAUS BECKER', 'Modehaus Becker', 'Shopping › Kleidung'],
   ['exact', 'Drogerie Sonnenschein', 'Drogerie Sonnenschein', 'Shopping › Haushalt'],
   ['exact', 'TRATTORIA DA LUIGI', 'Da Luigi', 'Freizeit › Restaurants'],
   ['exact', 'SUSHI BAR KAITO', 'Sushi Kaito', 'Freizeit › Restaurants'],
-  ['exact', 'KINO AM PARK', 'Kino am Park', 'Freizeit › Kultur']
+  ['exact', 'KINO AM PARK', 'Park Cinema', 'Freizeit › Kultur']
 ];
 const payee: Record<string, number> = {};
 for (const [type, pattern, name, path] of rules) payee[name] = store.saveRule({ matchType: type, pattern, name, categoryId: cat(path) }).payeeId;
@@ -118,35 +118,35 @@ let firstQuarter = now - 11;
 while (firstQuarter % 3 !== 0) firstQuarter++;
 const march = Math.floor(now / 12) * 12 + 2;
 const recurring: [string, string, number, number, string][] = [
-  ['Gehalt', 'Muster GmbH', 265000, 1, start(11, 28)],
-  ['Miete', 'Vermieter', -85000, 1, start(11, 1)],
+  ['Salary', 'Muster GmbH', 265000, 1, start(11, 28)],
+  ['Rent', 'Landlord', -85000, 1, start(11, 1)],
   ['Deutschlandticket', 'Deutschlandticket', -5800, 1, start(11, 1)],
-  ['Fitnessstudio', 'Fitnesspark', -3500, 1, start(11, 3)],
-  ['Mobilfunk', 'Mobilfunk', -1400, 1, start(11, 5)],
+  ['Gym', 'Fitnesspark', -3500, 1, start(11, 3)],
+  ['Mobile plan', 'Mobile plan', -1400, 1, start(11, 5)],
   ['Streaming', 'Streamly', -1399, 1, start(11, 12)],
-  ['Strom', 'Stadtwerke', -6500, 1, start(11, 15)],
+  ['Electricity', 'Stadtwerke', -6500, 1, start(11, 15)],
   ['Internet', 'Vodafone', -3999, 1, start(11, 23)],
   ['Google One', 'Google One', -299, 1, start(11, 26)],
-  ['Rundfunkbeitrag', 'Rundfunkbeitrag', -5508, 3, dateInMonth(firstQuarter, 15)],
-  ['Haftpflichtversicherung', 'Haftpflicht', -6840, 12, dateInMonth(march <= now ? march : march - 12, 1)]
+  ['TV licence', 'TV licence', -5508, 3, dateInMonth(firstQuarter, 15)],
+  ['Liability insurance', 'Liability insurance', -6840, 12, dateInMonth(march <= now ? march : march - 12, 1)]
 ];
 const ids: Record<string, number> = {};
 for (const [name, p, amount, frequency, startDate] of recurring) {
-  ids[name] = store.createPlan({ type: 'recurring', name, payeeId: payee[p], frequency, startDate, amount, endDate: name === 'Fitnessstudio' ? monthEnd(now + 5) : null });
+  ids[name] = store.createPlan({ type: 'recurring', name, payeeId: payee[p], frequency, startDate, amount, endDate: name === 'Gym' ? monthEnd(now + 5) : null });
 }
-store.addPlanAmount(ids.Miete, dateInMonth(now + 3, 1), -89000);
+store.addPlanAmount(ids.Rent, dateInMonth(now + 3, 1), -89000);
 
-for (const [path, amount] of [['Lebensmittel', -30000], ['Freizeit', -15000], ['Shopping', -12000]] as const) {
-  store.createPlan({ type: 'budget', name: path, categoryId: cat(path), startDate: start(11, 1), amount });
+for (const [path, name, amount] of [['Lebensmittel', 'Groceries', -30000], ['Freizeit', 'Leisure', -15000], ['Shopping', 'Shopping', -12000]] as const) {
+  store.createPlan({ type: 'budget', name, categoryId: cat(path), startDate: start(11, 1), amount });
 }
-store.createPlan({ type: 'oneoff', name: 'Inspektion Auto', categoryId: cat('Mobilität › Auto'), startDate: dateInMonth(now + 1, 20), amount: -35000 });
-store.createPlan({ type: 'oneoff', name: 'Weihnachtsgeschenke', categoryId: cat('Shopping'), startDate: dateInMonth(now + 2, 10), amount: -40000 });
-store.createPlan({ type: 'oneoff', name: 'Anzahlung Urlaub', categoryId: cat('Freizeit'), startDate: dateInMonth(now + 4, 1), amount: -60000 });
-store.createPlan({ type: 'oneoff', name: 'Steuererstattung', categoryId: cat('Einnahmen › Erstattungen'), startDate: dateInMonth(now + 5, 15), amount: 82000 });
-store.createPlan({ type: 'oneoff', name: 'Ersatzteil Fahrrad', payeeId: payee.Amazon, startDate: dateInMonth(now, 25), amount: -4500 });
+store.createPlan({ type: 'oneoff', name: 'Car service', categoryId: cat('Mobilität › Auto'), startDate: dateInMonth(now + 1, 20), amount: -35000 });
+store.createPlan({ type: 'oneoff', name: 'Christmas presents', categoryId: cat('Shopping'), startDate: dateInMonth(now + 2, 10), amount: -40000 });
+store.createPlan({ type: 'oneoff', name: 'Holiday deposit', categoryId: cat('Freizeit'), startDate: dateInMonth(now + 4, 1), amount: -60000 });
+store.createPlan({ type: 'oneoff', name: 'Tax refund', categoryId: cat('Einnahmen › Erstattungen'), startDate: dateInMonth(now + 5, 15), amount: 82000 });
+store.createPlan({ type: 'oneoff', name: 'Bike part', payeeId: payee.Amazon, startDate: dateInMonth(now, 25), amount: -4500 });
 
 // Link the past; leave this month's electricity, internet and the bike part open for the matching view.
-const keepOpen = new Set([ids.Strom, ids.Internet]);
+const keepOpen = new Set([ids.Electricity, ids.Internet]);
 const state = store.state();
 const current = (date: string) => monthIndex(date) === now;
 store.addMatches(suggestMatches(state).filter((s) => {
@@ -155,4 +155,15 @@ store.addMatches(suggestMatches(state).filter((s) => {
   return !(keepOpen.has(s.planId) && current(s.period));
 }));
 
-console.log(`Demo-Datenbank ${file}: ${store.state().transactions.length} Buchungen, ${store.state().plans.length} Planposten.`);
+// The demo is shown in English, so the default categories get English names.
+const EN: Record<string, string> = {
+  Wohnen: 'Housing', Miete: 'Rent', 'Strom & Gas': 'Electricity & gas', 'Internet & Telefon': 'Internet & phone',
+  Lebensmittel: 'Groceries', Supermarkt: 'Supermarket', 'Bäckerei & Café': 'Bakery & café',
+  Mobilität: 'Transport', ÖPNV: 'Public transport', 'Bahn & Fernverkehr': 'Rail', Auto: 'Car',
+  Kleidung: 'Clothing', Haushalt: 'Household', Freizeit: 'Leisure', Kultur: 'Culture',
+  'Abos & Verträge': 'Subscriptions', 'Cloud & Software': 'Cloud & software', Versicherungen: 'Insurance', Gebühren: 'Fees',
+  Einnahmen: 'Income', Gehalt: 'Salary', Erstattungen: 'Refunds'
+};
+for (const c of store.state().categories) if (EN[c.name]) store.updateCategory(c.id, { name: EN[c.name] });
+
+console.log(`Demo database ${file}: ${store.state().transactions.length} transactions, ${store.state().plans.length} plans.`);
