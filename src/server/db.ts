@@ -126,6 +126,10 @@ export function openDb(file = process.env.FT_DB ?? 'data/finance.db'): DatabaseS
   db.exec('PRAGMA foreign_keys = ON');
   if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL');
   const { user_version: version } = db.prepare('PRAGMA user_version').get() as { user_version: number };
+  if (version > MIGRATIONS.length) {
+    db.close();
+    throw new Error(`${file} was written by a newer version of finance-tracker (schema ${version}); please update.`);
+  }
   for (let v = version; v < MIGRATIONS.length; v++) {
     db.exec('BEGIN');
     try {
@@ -138,4 +142,24 @@ export function openDb(file = process.env.FT_DB ?? 'data/finance.db'): DatabaseS
     }
   }
   return db;
+}
+
+/** Throws unless the file is a finance-tracker database this version can open. */
+export function checkDbFile(file: string): void {
+  let db: DatabaseSync;
+  try {
+    db = new DatabaseSync(file, { readOnly: true });
+  } catch {
+    throw new Error('not_a_database');
+  }
+  try {
+    const { user_version: version } = db.prepare('PRAGMA user_version').get() as { user_version: number };
+    const ok = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'transactions'").get();
+    if (!ok || version < 1) throw new Error('not_a_database');
+    if (version > MIGRATIONS.length) throw new Error('newer_schema');
+  } catch (e) {
+    throw new Error((e as Error).message === 'newer_schema' ? 'newer_schema' : 'not_a_database');
+  } finally {
+    db.close();
+  }
 }

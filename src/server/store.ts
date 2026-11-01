@@ -38,6 +38,23 @@ export interface PlanInput {
 export class Store {
   constructor(private db: DatabaseSync) {}
 
+  /** Switches to another database connection (after the file was replaced) and returns the old one. */
+  swap(db: DatabaseSync): DatabaseSync {
+    const old = this.db;
+    this.db = db;
+    return old;
+  }
+
+  /** Consistent, compact copy of the whole database; identical content gives identical bytes. */
+  snapshot(file: string) {
+    this.db.prepare('VACUUM INTO ?').run(file);
+  }
+
+  /** Nothing entered yet: no transactions and no plans. */
+  isEmpty(): boolean {
+    return !this.get('SELECT 1 FROM transactions LIMIT 1') && !this.get('SELECT 1 FROM plans LIMIT 1');
+  }
+
   private all(sql: string, ...params: any[]): Row[] { return this.db.prepare(sql).all(...params) as Row[]; }
   private get(sql: string, ...params: any[]): Row | undefined { return this.db.prepare(sql).get(...params) as Row | undefined; }
   private run(sql: string, ...params: any[]) { return this.db.prepare(sql).run(...params); }

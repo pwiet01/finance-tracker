@@ -135,3 +135,21 @@ export interface ImportResult {
   inserted: number;
   transactionIds: number[];
 }
+
+export type SyncState = 'off' | 'idle' | 'pending' | 'syncing' | 'conflict' | 'error';
+
+export interface SyncStatus {
+  /** OAuth client id and secret are known (entered or from the environment). */
+  configured: boolean;
+  /** Credentials come from GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET and cannot be changed in the app. */
+  fromEnv: boolean;
+  connected: boolean;
+  state: SyncState;
+  lastSync: string | null;
+  error: string | null;
+  /** Link to the database file in Google Drive. */
+  link: string | null;
+  redirectUri: string;
+  /** Increases whenever the local data was replaced by the Drive version; the client reloads then. */
+  revision: number;
+}

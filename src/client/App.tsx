@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { suggestMatches } from '../shared/matching';
+import { SyncButton } from './components/Sync';
 import { Icon, Logo } from './components/ui';
 import { DataProvider, useData } from './data';
 import type { Key } from './i18n';
@@ -80,7 +81,7 @@ function Shell() {
             <button type="button" className={lang === 'de' ? 'on' : ''} aria-pressed={lang === 'de'} onClick={() => setLang('de')}>Deutsch</button>
             <button type="button" className={lang === 'en' ? 'on' : ''} aria-pressed={lang === 'en'} onClick={() => setLang('en')}>English</button>
           </div>
-          <a className="link small row" href="/api/export" download><Icon name="download" size={14} />{t('exportBackup')}</a>
+          <SyncButton />
         </div>
       </aside>
       <main className="main">
