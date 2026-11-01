@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { Category, CategoryKind, MatchType, PayeeRule } from '../../shared/types';
-import { CategorySelect, Dot, Icon, Modal, categoryLabel } from '../components/ui';
+import { Dot, Icon, Modal, PayeeCategorySelect, categoryLabel, payeeCategory, payeeCategoryBody } from '../components/ui';
 import { api, useData } from '../data';
 import { useSettings } from '../settings';
 
@@ -85,9 +85,9 @@ function RulesCard({ onEdit, onNew }: { onEdit: (r: PayeeRule) => void; onNew: (
                 return (
                   <tr key={r.id} className="click" onClick={() => onEdit(r)}>
                     <td><span className="chip acc">{t(r.matchType)}</span></td>
-                    <td className="small" style={{ fontFamily: 'ui-monospace, monospace' }}>{r.pattern}</td>
+                    <td className="small"><span style={{ fontFamily: 'ui-monospace, monospace' }}>{r.pattern}</span>{r.purpose && <div className="muted">{t('purposeShort', { p: r.purpose })}</div>}</td>
                     <td><button type="button" className="rowbtn" onClick={(e) => { e.stopPropagation(); onEdit(r); }}>{lk.payeeName(r.payeeId)}</button></td>
-                    <td>{cat ? <span className="chip"><Dot color={cat.color} />{categoryLabel(state.categories, cat)}</span> : <span className="chip warn">{t('uncategorized')}</span>}</td>
+                    <td>{cat ? <span className="chip"><Dot color={cat.color} />{categoryLabel(state.categories, cat)}</span> : payee?.mixed ? <span className="chip">{t('mixedChip')}</span> : <span className="chip warn">{t('uncategorized')}</span>}</td>
                     <td className="r num muted">{hits(r)}</td>
                   </tr>
                 );
@@ -109,7 +109,7 @@ function PayeesCard() {
     for (const tx of state.transactions) m.set(tx.payeeId, (m.get(tx.payeeId) ?? 0) + 1);
     return m;
   }, [state.transactions]);
-  const payees = state.payees.filter((p) => (counts.get(p.id) ?? 0) > 0 && (!onlyUncat || !p.categoryId))
+  const payees = state.payees.filter((p) => (counts.get(p.id) ?? 0) > 0 && (!onlyUncat || (!p.categoryId && !p.mixed)))
     .sort((a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0));
   return (
     <section className="card flush">
@@ -125,7 +125,7 @@ function PayeesCard() {
                 <tr key={p.id}>
                   <td className="strong">{p.name}<div className="small muted">{t('txN', { n: counts.get(p.id) ?? 0 })}</div></td>
                   <td style={{ width: '45%' }}>
-                    <CategorySelect value={p.categoryId} onChange={(categoryId) => mutate(() => api('PATCH', `/payees/${p.id}`, { categoryId }))} />
+                    <PayeeCategorySelect value={payeeCategory(p)} onChange={(v) => mutate(() => api('PATCH', `/payees/${p.id}`, payeeCategoryBody(v)))} />
                   </td>
                 </tr>
               ))}
@@ -194,8 +194,12 @@ function RuleForm({ rule, onClose }: { rule?: PayeeRule; onClose: () => void }) 
   const { state, mutate } = useData();
   const { t } = useSettings();
   const payee = rule && state.payees.find((p) => p.id === rule.payeeId);
-  const [f, setF] = useState({ matchType: rule?.matchType ?? 'starts' as MatchType, pattern: rule?.pattern ?? '', name: payee?.name ?? '', categoryId: payee?.categoryId ?? null as number | null });
-  const save = () => mutate(() => rule ? api('PUT', `/rules/${rule.id}`, f) : api('POST', '/rules', f)).then((ok) => ok && onClose());
+  const [f, setF] = useState({ matchType: rule?.matchType ?? 'starts' as MatchType, pattern: rule?.pattern ?? '', purpose: rule?.purpose ?? '', name: payee?.name ?? '', category: payeeCategory(payee) });
+  const save = () => {
+    const { category, ...rest } = f;
+    const body = { ...rest, ...payeeCategoryBody(category) };
+    return mutate(() => rule ? api('PUT', `/rules/${rule.id}`, body) : api('POST', '/rules', body)).then((ok) => ok && onClose());
+  };
   const remove = () => { if (rule && confirm(t('confirmDelete'))) void mutate(() => api('DELETE', `/rules/${rule.id}`)).then(onClose); };
   return (
     <Modal open title={rule ? t('editRule') : t('newRule')} onClose={onClose} footer={
@@ -216,8 +220,9 @@ function RuleForm({ rule, onClose }: { rule?: PayeeRule; onClose: () => void }) 
           </label>
           <label className="field"><span>{t('pattern')}</span><input value={f.pattern} autoFocus onChange={(e) => setF({ ...f, pattern: e.target.value })} /></label>
         </div>
+        <label className="field"><span>{t('purposeContains')}</span><input value={f.purpose} placeholder={t('purposePh')} onChange={(e) => setF({ ...f, purpose: e.target.value })} /></label>
         <label className="field"><span>{t('displayName')}</span><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></label>
-        <label className="field"><span>{t('category')}</span><CategorySelect value={f.categoryId} onChange={(categoryId) => setF({ ...f, categoryId })} /></label>
+        <label className="field"><span>{t('category')}</span><PayeeCategorySelect value={f.category} onChange={(category) => setF({ ...f, category })} /></label>
       </div>
     </Modal>
   );

@@ -38,6 +38,11 @@ export function createApi(store: Store) {
     store.updatePayees(ids, categoryId ?? null);
     return c.json({ ok: true });
   });
+  api.patch('/transactions', async (c) => {
+    const { ids, categoryId } = await c.req.json();
+    store.updateTransactions(ids, categoryId ?? null);
+    return c.json({ ok: true });
+  });
   api.patch('/payees/:id', async (c) => { store.updatePayee(id(c.req.param('id')), await c.req.json()); return c.json({ ok: true }); });
 
   api.post('/categories', async (c) => c.json(store.createCategory(await c.req.json())));

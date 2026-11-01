@@ -9,10 +9,10 @@ const plan = (p: Partial<Plan> & { amount?: number }): Plan => ({
   status: 'active', amounts: [{ id: 1, validFrom: p.startDate ?? '2026-01-15', amount: p.amount ?? -1000 }], ...p
 });
 const tx = (id: number, date: string, amount: number, payeeId = 1): Transaction => ({
-  id, date, valueDate: date, amount, rawPayee: 'x', purpose: '', iban: null, type: null, payeeId, importId: 1
+  id, date, valueDate: date, amount, rawPayee: 'x', purpose: '', iban: null, type: null, payeeId, categoryId: null, importId: 1
 });
 const state = (s: Partial<AppState>): AppState => ({
-  categories: [], payees: [{ id: 1, name: 'Vermieter', categoryId: null }], rules: [], transactions: [], plans: [], matches: [],
+  categories: [], payees: [{ id: 1, name: 'Vermieter', categoryId: null, mixed: false }], rules: [], transactions: [], plans: [], matches: [],
   dismissals: [], ignoredRecurring: [], balance: null, ...s
 });
 
@@ -63,7 +63,7 @@ describe('forecast', () => {
   const categories = [{ id: 10, name: 'Lebensmittel', parentId: null, color: '#000', kind: 'expense' as const }, { id: 11, name: 'Supermarkt', parentId: 10, color: '#000', kind: 'expense' as const }];
   const base = state({
     categories,
-    payees: [{ id: 1, name: 'Vermieter', categoryId: null }, { id: 2, name: 'REWE', categoryId: 11 }],
+    payees: [{ id: 1, name: 'Vermieter', categoryId: null, mixed: false }, { id: 2, name: 'REWE', categoryId: 11, mixed: false }],
     balance: { date: '2026-10-20', amount: 100000 },
     transactions: [tx(1, '2026-10-01', -80000), tx(2, '2026-10-05', -12000, 2)],
     plans: [

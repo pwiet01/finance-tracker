@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import type { Category } from '../../shared/types';
+import type { Category, Transaction } from '../../shared/types';
 import { api, useData } from '../data';
 import { useSettings } from '../settings';
 import { CategoryChip, Dot, categoryLabel } from './ui';
@@ -19,44 +19,53 @@ export function searchCategories(categories: Category[], query: string): Categor
   return scored.sort((a, b) => a[1] - b[1] || Number(!!a[0].parentId) - Number(!!b[0].parentId)).map(([c]) => c);
 }
 
+type Row =
+  | { kind: 'payee'; payeeId: number; count: number; sum: number; sample: string }
+  | { kind: 'tx'; payeeId: number; tx: Transaction };
+
+/** Uncategorised bookings of a mixed payee, one row each, newest first. */
+const txRows = (txs: Transaction[], payeeId: number): Row[] =>
+  txs.filter((tx) => tx.payeeId === payeeId && !tx.categoryId).map((tx) => ({ kind: 'tx', payeeId, tx }));
+
 /**
- * Keyboard-driven list of payees without category, most frequent first. The list is
- * fixed when it opens, so rows stay in place while categories are assigned.
+ * Keyboard-driven list of payees without category, most frequent first, followed by the
+ * single bookings of mixed payees. The list is fixed when it opens, so rows stay in place
+ * while categories are assigned.
  */
 export function PayeeTriage({ transactionIds, onDone }: { transactionIds?: number[]; onDone?: () => void }) {
-  const { state, mutate } = useData();
-  const { t, money, pct } = useSettings();
+  const { state, lk, mutate } = useData();
+  const { t, money, pct, date } = useSettings();
   const scope = useMemo(() => {
     const wanted = transactionIds ? new Set(transactionIds) : null;
     return state.transactions.filter((tx) => !wanted || wanted.has(tx.id));
   }, [state.transactions, transactionIds]);
 
-  const [rows] = useState(() => {
-    const uncategorized = new Set(state.payees.filter((p) => !p.categoryId).map((p) => p.id));
+  const [rows, setRows] = useState<Row[]>(() => {
+    const uncategorized = new Set(state.payees.filter((p) => !p.categoryId && !p.mixed).map((p) => p.id));
     const stats = new Map<number, { count: number; sum: number; sample: string }>();
     for (const tx of scope) {
-      if (!uncategorized.has(tx.payeeId)) continue;
+      if (!uncategorized.has(tx.payeeId) || tx.categoryId) continue;
       const s = stats.get(tx.payeeId) ?? { count: 0, sum: 0, sample: tx.purpose };
       s.count++;
       s.sum += tx.amount;
       stats.set(tx.payeeId, s);
     }
-    return [...stats.entries()]
+    const payeeRows: Row[] = [...stats.entries()]
       .sort(([, a], [, b]) => b.count - a.count || Math.abs(b.sum) - Math.abs(a.sum))
-      .map(([payeeId, s]) => ({ payeeId, ...s }));
+      .map(([payeeId, s]) => ({ kind: 'payee', payeeId, ...s }));
+    return [...payeeRows, ...state.payees.filter((p) => p.mixed).flatMap((p) => txRows(scope, p.id))];
   });
   const [limit, setLimit] = useState(PAGE);
   const inputs = useRef<(HTMLInputElement | null)[]>([]);
 
   const share = useMemo(() => {
-    const cats = new Map(state.payees.map((p) => [p.id, p.categoryId]));
     let all = 0, done = 0;
     for (const tx of scope) {
       all += Math.abs(tx.amount);
-      if (cats.get(tx.payeeId)) done += Math.abs(tx.amount);
+      if (lk.categoryOf(tx)) done += Math.abs(tx.amount);
     }
     return all ? done / all : 1;
-  }, [scope, state.payees]);
+  }, [scope, lk]);
 
   const focusRow = (i: number) => {
     if (i >= limit && i < rows.length) setLimit(limit + PAGE);
@@ -64,7 +73,17 @@ export function PayeeTriage({ transactionIds, onDone }: { transactionIds?: numbe
   };
   const assign = (i: number, categoryId: number) => {
     focusRow(i + 1);
-    void mutate(() => api('PATCH', `/payees/${rows[i].payeeId}`, { categoryId }));
+    const r = rows[i];
+    void mutate(() => r.kind === 'tx'
+      ? api('PATCH', '/transactions', { ids: [r.tx.id], categoryId })
+      : api('PATCH', `/payees/${r.payeeId}`, { categoryId }));
+  };
+  /** Replaces a payee row with rows for its single bookings. */
+  const markMixed = (i: number) => {
+    const { payeeId } = rows[i];
+    setRows([...rows.slice(0, i), ...txRows(scope, payeeId), ...rows.slice(i + 1)]);
+    focusRow(i);
+    void mutate(() => api('PATCH', `/payees/${payeeId}`, { mixed: true }));
   };
 
   return (
@@ -79,15 +98,23 @@ export function PayeeTriage({ transactionIds, onDone }: { transactionIds?: numbe
           {rows.slice(0, limit).map((r, i) => {
             const payee = state.payees.find((p) => p.id === r.payeeId);
             if (!payee) return null;
+            const tx = r.kind === 'tx' ? state.transactions.find((x) => x.id === r.tx.id) ?? r.tx : null;
+            const current = tx ? tx.categoryId : payee.categoryId;
             return (
-              <div key={r.payeeId} className={`trow ${payee.categoryId ? 'done' : ''}`}>
+              <div key={tx ? `t${tx.id}` : `p${r.payeeId}`} className={`trow ${current ? 'done' : ''}`}>
                 <div className="grow">
                   <div className="strong ellipsis">{payee.name}</div>
-                  <div className="small muted ellipsis">{t('txN', { n: r.count })} · {money(r.sum, { signed: true })}{r.sample ? ` · ${r.sample}` : ''}</div>
+                  <div className="small muted ellipsis">
+                    {tx ? `${date(tx.date)} · ${money(tx.amount, { signed: true })}${tx.purpose ? ` · ${tx.purpose}` : ''}`
+                      : r.kind === 'payee' && `${t('txN', { n: r.count })} · ${money(r.sum, { signed: true })}${r.sample ? ` · ${r.sample}` : ''}`}
+                  </div>
                 </div>
+                {!tx && !current && (
+                  <button type="button" className="btn sm" title={t('markMixedHint', { name: payee.name })} onClick={() => markMixed(i)}>{t('markMixed')}</button>
+                )}
                 <CategoryCombo
                   inputRef={(el) => { inputs.current[i] = el; }}
-                  current={payee.categoryId}
+                  current={current}
                   onPick={(id) => assign(i, id)}
                   onMove={(d) => focusRow(i + d)}
                 />

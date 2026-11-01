@@ -17,12 +17,16 @@ export interface Payee {
   id: number;
   name: string;
   categoryId: number | null;
+  /** Bookings fall into different categories (e.g. PayPal), so the payee has none and each booking gets its own. */
+  mixed: boolean;
 }
 
 export interface PayeeRule {
   id: number;
   matchType: MatchType;
   pattern: string;
+  /** Optional text the purpose must contain; '' = any purpose. */
+  purpose: string;
   payeeId: number;
   /** Created automatically on import for an unknown counterparty. */
   auto: boolean;
@@ -38,6 +42,8 @@ export interface Transaction {
   iban: string | null;
   type: string | null;
   payeeId: number;
+  /** Overrides the payee's category for this booking only. */
+  categoryId: number | null;
   importId: number | null;
 }
 

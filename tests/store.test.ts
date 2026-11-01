@@ -100,6 +100,52 @@ describe('Store', () => {
     expect(store.state().ignoredRecurring).toEqual([]);
   });
 
+  it('gives single bookings their own category and keeps it when rules change', () => {
+    store.commitImport(sample, 'a.csv');
+    const s = store.state();
+    const food = s.categories.find((c) => c.name === 'Supermarkt')!;
+    const cafe = s.categories.find((c) => c.name === 'Bäckerei & Café')!;
+    const rewe = s.payees.find((p) => p.name === 'REWE')!;
+    store.updatePayee(rewe.id, { categoryId: food.id });
+    const [one, other] = s.transactions.filter((t) => t.payeeId === rewe.id);
+    store.updateTransactions([one.id], cafe.id);
+    store.saveRule({ matchType: 'exact', pattern: 'REWE', name: 'Rewe' });
+    const after = store.state();
+    expect(after.transactions.find((t) => t.id === one.id)?.categoryId).toBe(cafe.id);
+    expect(after.transactions.find((t) => t.id === other.id)?.categoryId).toBeNull();
+    store.updateTransactions([one.id], null);
+    expect(store.state().transactions.find((t) => t.id === one.id)?.categoryId).toBeNull();
+  });
+
+  it('keeps mixed payees without default category', () => {
+    store.commitImport(sample, 'a.csv');
+    const s = store.state();
+    const cat = s.categories.find((c) => c.name === 'Online')!;
+    const paypal = s.transactions.find((t) => t.rawPayee === 'PAYPAL')!;
+    store.updatePayee(paypal.payeeId, { categoryId: cat.id });
+    store.updatePayee(paypal.payeeId, { mixed: true });
+    expect(store.state().payees.find((p) => p.id === paypal.payeeId)).toMatchObject({ mixed: true, categoryId: null });
+    store.updatePayees([paypal.payeeId], cat.id);
+    expect(store.state().payees.find((p) => p.id === paypal.payeeId)).toMatchObject({ mixed: false, categoryId: cat.id });
+  });
+
+  it('routes bookings to another payee by their purpose, also on later imports', () => {
+    store.commitImport(sample, 'a.csv');
+    const amazonRaw = 'AMAZON PAYMENTS EUROPE S.C.A.';
+    const before = store.state().transactions.find((t) => t.rawPayee === amazonRaw)!;
+    const { payeeId } = store.saveRule({ matchType: 'exact', pattern: amazonRaw, purpose: 'mktp', name: 'Marketplace' });
+    let s = store.state();
+    expect(s.transactions.find((t) => t.id === before.id)?.payeeId).toBe(payeeId);
+    // The plain name rule stays for bookings whose purpose does not match.
+    expect(s.rules.some((r) => r.auto && r.pattern === amazonRaw)).toBe(true);
+
+    store.commitImport(sample.replace('-49,90;DE00ZZZ00000000001;M1;K1', '-5,00;;;').replace('AMZN Mktp DE', 'Gutschein'), 'b.csv');
+    s = store.state();
+    const voucher = s.transactions.find((t) => t.purpose.includes('Gutschein'))!;
+    expect(voucher.payeeId).not.toBe(payeeId);
+    expect(store.previewImport(sample).rows.find((r) => r.rawPayee === amazonRaw)?.payeeName).toBe('Marketplace');
+  });
+
   it('saves several rules with one re-resolve and sets categories of several payees', () => {
     store.commitImport(sample, 'a.csv');
     const { payeeIds } = store.saveRules([

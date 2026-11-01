@@ -16,8 +16,11 @@ export interface RuleInput {
   id?: number;
   matchType: MatchType;
   pattern: string;
+  /** Text the purpose must contain; empty = any purpose. */
+  purpose?: string;
   name: string;
   categoryId?: number | null;
+  mixed?: boolean;
 }
 
 export interface PlanInput {
@@ -64,7 +67,7 @@ export class Store {
       rules: this.rules(),
       transactions: this.all('SELECT * FROM transactions ORDER BY date DESC, id DESC').map((r) => ({
         id: r.id, date: r.date, valueDate: r.value_date, amount: r.amount, rawPayee: r.raw_payee, purpose: r.purpose,
-        iban: r.iban, type: r.type, payeeId: r.payee_id, importId: r.import_id
+        iban: r.iban, type: r.type, payeeId: r.payee_id, categoryId: r.category_id, importId: r.import_id
       })),
       plans: this.all('SELECT * FROM plans ORDER BY id').map((r) => ({
         id: r.id, type: r.type, name: r.name, payeeId: r.payee_id, categoryId: r.category_id, frequency: r.frequency,
@@ -79,12 +82,14 @@ export class Store {
   }
 
   private payees(): Payee[] {
-    return this.all('SELECT * FROM payees ORDER BY name COLLATE NOCASE').map((r) => ({ id: r.id, name: r.name, categoryId: r.category_id }));
+    return this.all('SELECT * FROM payees ORDER BY name COLLATE NOCASE').map((r) => ({
+      id: r.id, name: r.name, categoryId: r.category_id, mixed: !!r.mixed
+    }));
   }
 
   private rules(): PayeeRule[] {
     return this.all('SELECT * FROM payee_rules ORDER BY id').map((r) => ({
-      id: r.id, matchType: r.match_type, pattern: r.pattern, payeeId: r.payee_id, auto: !!r.auto
+      id: r.id, matchType: r.match_type, pattern: r.pattern, purpose: r.purpose, payeeId: r.payee_id, auto: !!r.auto
     }));
   }
 
@@ -110,7 +115,7 @@ export class Store {
       balance: parsed.balance,
       errors: parsed.errors,
       rows: rows.map((r) => {
-        const rule = resolveRule(r.counterparty, rules);
+        const rule = resolveRule(r.counterparty, r.purpose, rules);
         return {
           date: r.date, amount: r.amount, rawPayee: r.counterparty, purpose: r.purpose,
           payeeName: rule ? payees.get(rule.payeeId) ?? r.counterparty : r.counterparty,
@@ -137,8 +142,9 @@ export class Store {
       const insert = this.db.prepare(`INSERT INTO transactions
         (date, value_date, amount, raw_payee, purpose, iban, type, hash, payee_id, import_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      const rules = this.rules();
       const ids = fresh.map((r) => Number(insert.run(
-        r.date, r.valueDate, r.amount, r.counterparty, r.purpose, r.iban, r.type, r.hash, this.payeeForRaw(r.counterparty), importId
+        r.date, r.valueDate, r.amount, r.counterparty, r.purpose, r.iban, r.type, r.hash, this.payeeFor(r.counterparty, r.purpose, rules), importId
       ).lastInsertRowid));
       if (preview.balance) {
         this.run('INSERT INTO balances (date, amount) VALUES (?, ?) ON CONFLICT(date) DO UPDATE SET amount = excluded.amount',
@@ -157,20 +163,27 @@ export class Store {
     return row ? row.id : Number(this.run('INSERT INTO payees (name) VALUES (?)', clean).lastInsertRowid);
   }
 
-  /** Payee for a raw counterparty; unknown names get their own payee and an automatic exact rule. */
-  private payeeForRaw(raw: string): number {
-    const rule = resolveRule(raw, this.rules());
+  /**
+   * Payee for a booking; unknown names get their own payee and an automatic exact rule.
+   * `rules` is the current rule list and receives any automatic rule created here.
+   */
+  private payeeFor(raw: string, purpose: string, rules: PayeeRule[]): number {
+    const rule = resolveRule(raw, purpose, rules);
     if (rule) return rule.payeeId;
     const payeeId = this.ensurePayee(raw || '—');
-    this.run('INSERT OR IGNORE INTO payee_rules (match_type, pattern, payee_id, auto) VALUES (?, ?, ?, 1)', 'exact', raw, payeeId);
+    const id = Number(this.run('INSERT INTO payee_rules (match_type, pattern, payee_id, auto) VALUES (?, ?, ?, 1)', 'exact', raw, payeeId).lastInsertRowid);
+    rules.push({ id, matchType: 'exact', pattern: raw, purpose: '', payeeId, auto: true });
     return payeeId;
   }
 
   /** Re-applies all rules to all transactions and removes payees nothing refers to any more. */
   private reresolve() {
-    const raws = this.all('SELECT DISTINCT raw_payee FROM transactions').map((r) => r.raw_payee as string);
-    const update = this.db.prepare('UPDATE transactions SET payee_id = ? WHERE raw_payee = ?');
-    for (const raw of raws) update.run(this.payeeForRaw(raw), raw);
+    const rules = this.rules();
+    const update = this.db.prepare('UPDATE transactions SET payee_id = ? WHERE id = ?');
+    for (const t of this.all('SELECT id, raw_payee, purpose, payee_id FROM transactions')) {
+      const payeeId = this.payeeFor(t.raw_payee, t.purpose, rules);
+      if (payeeId !== t.payee_id) update.run(payeeId, t.id);
+    }
     this.run(`DELETE FROM payees WHERE id NOT IN (SELECT payee_id FROM transactions)
       AND id NOT IN (SELECT payee_id FROM payee_rules) AND id NOT IN (SELECT payee_id FROM plans WHERE payee_id IS NOT NULL)`);
   }
@@ -194,15 +207,19 @@ export class Store {
 
   private writeRule(input: RuleInput): number {
     const pattern = input.pattern.trim();
+    const purpose = input.purpose?.trim() ?? '';
     if (!pattern) throw new HttpError(400, 'pattern_required');
     const payeeId = this.ensurePayee(input.name);
-    if (input.categoryId !== undefined) this.run('UPDATE payees SET category_id = ? WHERE id = ?', input.categoryId, payeeId);
+    this.setPayeeCategory(payeeId, input);
     if (input.id) this.run('DELETE FROM payee_rules WHERE id = ?', input.id);
-    this.run(`INSERT INTO payee_rules (match_type, pattern, payee_id, auto) VALUES (?, ?, ?, 0)
-      ON CONFLICT(match_type, pattern) DO UPDATE SET payee_id = excluded.payee_id, auto = 0`, input.matchType, pattern, payeeId);
+    this.run(`INSERT INTO payee_rules (match_type, pattern, purpose, payee_id, auto) VALUES (?, ?, ?, ?, 0)
+      ON CONFLICT(match_type, pattern, purpose) DO UPDATE SET payee_id = excluded.payee_id, auto = 0`, input.matchType, pattern, purpose, payeeId);
     // Automatic rules covered by the new rule would otherwise keep the old names alive.
-    for (const r of this.rules().filter((r) => r.auto && ruleMatches(input.matchType, pattern, r.pattern))) {
-      this.run('DELETE FROM payee_rules WHERE id = ?', r.id);
+    // A rule that also checks the purpose covers only some bookings of a name, so those stay.
+    if (!purpose) {
+      for (const r of this.rules().filter((r) => r.auto && ruleMatches(input.matchType, pattern, r.pattern))) {
+        this.run('DELETE FROM payee_rules WHERE id = ?', r.id);
+      }
     }
     return payeeId;
   }
@@ -214,9 +231,16 @@ export class Store {
     });
   }
 
-  updatePayee(id: number, input: { name?: string; categoryId?: number | null }) {
+  /** A payee either has a default category or is mixed; setting one clears the other. */
+  private setPayeeCategory(id: number, input: { categoryId?: number | null; mixed?: boolean }) {
+    if (input.mixed) this.run('UPDATE payees SET mixed = 1, category_id = NULL WHERE id = ?', id);
+    else if (input.categoryId !== undefined) this.run('UPDATE payees SET category_id = ?, mixed = 0 WHERE id = ?', input.categoryId, id);
+    else if (input.mixed === false) this.run('UPDATE payees SET mixed = 0 WHERE id = ?', id);
+  }
+
+  updatePayee(id: number, input: { name?: string; categoryId?: number | null; mixed?: boolean }) {
     this.tx(() => {
-      if (input.categoryId !== undefined) this.run('UPDATE payees SET category_id = ? WHERE id = ?', input.categoryId, id);
+      this.setPayeeCategory(id, input);
       const name = input.name?.trim();
       if (!name) return;
       const other = this.get('SELECT id FROM payees WHERE name = ? AND id != ?', name, id);
@@ -235,7 +259,14 @@ export class Store {
   /** Sets the category of several payees at once. */
   updatePayees(ids: number[], categoryId: number | null) {
     this.tx(() => {
-      for (const id of ids) this.run('UPDATE payees SET category_id = ? WHERE id = ?', categoryId, id);
+      for (const id of ids) this.setPayeeCategory(id, { categoryId });
+    });
+  }
+
+  /** Sets (or with null, removes) the own category of single bookings, independent of their payee. */
+  updateTransactions(ids: number[], categoryId: number | null) {
+    this.tx(() => {
+      for (const id of ids) this.run('UPDATE transactions SET category_id = ? WHERE id = ?', categoryId, id);
     });
   }
 
@@ -322,7 +353,7 @@ export class Store {
         this.run(`INSERT INTO plan_matches (plan_id, transaction_id, period) VALUES (?, ?, ?)
           ON CONFLICT(transaction_id) DO UPDATE SET plan_id = excluded.plan_id, period = excluded.period`, id, m.transactionId, m.period);
       }
-      if (input.categoryId) this.run('UPDATE payees SET category_id = ? WHERE id = ? AND category_id IS NULL', input.categoryId, input.payeeId);
+      if (input.categoryId) this.run('UPDATE payees SET category_id = ? WHERE id = ? AND category_id IS NULL AND mixed = 0', input.categoryId, input.payeeId);
       return id;
     }));
   }

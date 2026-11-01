@@ -12,7 +12,7 @@ export function lookup(state: AppState): Lookup {
   const payees = new Map(state.payees.map((p) => [p.id, p]));
   return {
     categoryOf: (t) => {
-      const id = payees.get(t.payeeId)?.categoryId;
+      const id = t.categoryId ?? payees.get(t.payeeId)?.categoryId;
       return id ? cats.get(id) : undefined;
     },
     topOf: (c) => (c?.parentId ? cats.get(c.parentId) : c),

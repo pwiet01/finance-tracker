@@ -3,10 +3,12 @@ import { monthKey } from '../../shared/dates';
 import { historyCandidates } from '../../shared/matching';
 import { periodFor, subtree } from '../../shared/plans';
 import { buildSeries } from '../../shared/recurring';
-import { resolveRule, ruleMatches } from '../../shared/rules';
+import { resolveRule, ruleApplies } from '../../shared/rules';
 import type { MatchType, Plan, Transaction } from '../../shared/types';
 import { toPlanInput } from '../components/RecurringSuggestions';
-import { Amount, CategoryChip, CategorySelect, Icon, formatAmountInput, parseAmountInput } from '../components/ui';
+import {
+  Amount, CategoryChip, CategorySelect, Icon, PayeeCategorySelect, categoryLabel, formatAmountInput, parseAmountInput, payeeCategory, payeeCategoryBody
+} from '../components/ui';
 import type { Key } from '../i18n';
 import { api, useData } from '../data';
 import { navigate } from '../router';
@@ -136,13 +138,16 @@ export function TransactionsPage({ query }: { query: URLSearchParams }) {
   );
 }
 
-/** Actions for many bookings at once. Categories live on payees, so they change for every booking of those payees. */
+/** Actions for many bookings at once. A category goes to the payees, or for mixed payees to the selected bookings only. */
 function BulkBar({ txs, onClear }: { txs: Transaction[]; onClear: () => void }) {
   const { state, today, lk, mutate } = useData();
   const { t, money, date } = useSettings();
   const payeeIds = [...new Set(txs.map((tx) => tx.payeeId))];
   const raws = [...new Set(txs.map((tx) => tx.rawPayee))];
   const [categoryId, setCategoryId] = useState<number | null>(null);
+  // Mixed payees have no category of their own, so the bookings are the default target until the user decides.
+  const [onlyTxChoice, setOnlyTx] = useState<boolean | null>(null);
+  const onlyTx = onlyTxChoice ?? state.payees.some((p) => p.mixed && payeeIds.includes(p.id));
   const [name, setName] = useState('');
   const [planId, setPlanId] = useState<number | null>(null);
   const linkable = state.plans.filter((p) => p.status === 'active' && (p.type === 'recurring' || p.type === 'oneoff'));
@@ -150,7 +155,9 @@ function BulkBar({ txs, onClear }: { txs: Transaction[]; onClear: () => void }) 
   const series = useMemo(() => (oneSeries ? buildSeries(txs, today) : null), [oneSeries, txs, today]);
   const done = (ok: boolean) => { if (ok) onClear(); };
 
-  const setCategory = () => mutate(() => api('PATCH', '/payees', { ids: payeeIds, categoryId })).then(done);
+  const setCategory = () => mutate(() => onlyTx
+    ? api('PATCH', '/transactions', { ids: txs.map((tx) => tx.id), categoryId })
+    : api('PATCH', '/payees', { ids: payeeIds, categoryId })).then(done);
   const rename = () => mutate(() => api('POST', '/rules/bulk', raws.map((raw) => ({ matchType: 'exact', pattern: raw, name: name.trim() })))).then(done);
   const linkPlan = () => {
     const plan = linkable.find((p) => p.id === planId);
@@ -171,7 +178,8 @@ function BulkBar({ txs, onClear }: { txs: Transaction[]; onClear: () => void }) 
       </div>
       <div className="field"><span>{t('bulkCategory')}</span>
         <div><CategorySelect value={categoryId} onChange={setCategoryId} /><button type="button" className="btn" onClick={setCategory}>{t('apply')}</button></div>
-        <span className="small muted">{t('bulkCatHint', { n: payeeIds.length })}</span>
+        <label className="check small"><input type="checkbox" checked={onlyTx} onChange={(e) => setOnlyTx(e.target.checked)} />{t('bulkOnlyTx')}</label>
+        <span className="small muted">{onlyTx ? t('bulkTxHint', { n: txs.length }) : t('bulkCatHint', { n: payeeIds.length })}</span>
       </div>
       <div className="field"><span>{t('bulkRename')}</span>
         <div><input value={name} placeholder={lk.payeeName(payeeIds[0])} onChange={(e) => setName(e.target.value)} /><button type="button" className="btn" disabled={!name.trim()} onClick={rename}>{t('apply')}</button></div>
@@ -206,12 +214,14 @@ function TransactionPanel({ tx, onClose }: { tx: Transaction; onClose: () => voi
   const { state, lk, mutate } = useData();
   const { t, money, date, pct, lang } = useSettings();
   const payee = state.payees.find((p) => p.id === tx.payeeId);
-  const rule = resolveRule(tx.rawPayee, state.rules);
+  const rule = resolveRule(tx.rawPayee, tx.purpose, state.rules);
   const initial = {
     name: payee?.name ?? tx.rawPayee,
     matchType: (rule && !rule.auto ? rule.matchType : 'exact') as MatchType,
     pattern: rule && !rule.auto ? rule.pattern : tx.rawPayee,
-    categoryId: payee?.categoryId ?? null
+    purpose: rule && !rule.auto ? rule.purpose : '',
+    category: payeeCategory(payee),
+    txCategoryId: tx.categoryId
   };
   const [form, setForm] = useState(initial);
   const match = state.matches.find((m) => m.transactionId === tx.id);
@@ -226,25 +236,29 @@ function TransactionPanel({ tx, onClose }: { tx: Transaction; onClose: () => voi
   const isPicked = (id: number) => picked[id] ?? history.find((h) => h.transaction.id === id)?.preselected ?? false;
   const pickedCount = history.filter((h) => isPicked(h.transaction.id)).length;
 
-  const raws = useMemo(() => [...new Set(state.transactions.map((x) => x.rawPayee))], [state.transactions]);
-  const affected = useMemo(() => {
-    const hit = new Set(raws.filter((r) => ruleMatches(form.matchType, form.pattern, r)));
-    return state.transactions.filter((x) => hit.has(x.rawPayee)).length;
-  }, [raws, form.matchType, form.pattern, state.transactions]);
+  const affected = useMemo(
+    () => state.transactions.filter((x) => ruleApplies(form, x.rawPayee, x.purpose)).length,
+    [form, state.transactions]
+  );
 
-  const ruleChanged = form.name.trim() !== initial.name || form.matchType !== initial.matchType || form.pattern.trim() !== initial.pattern;
+  const ruleChanged = form.name.trim() !== initial.name || form.matchType !== initial.matchType || form.pattern.trim() !== initial.pattern
+    || form.purpose.trim() !== initial.purpose;
+  const payeeCat = typeof form.category === 'number' ? state.categories.find((c) => c.id === form.category) : undefined;
 
   const save = () => mutate(async () => {
     let payeeId = tx.payeeId;
     if (ruleChanged) {
-      ({ payeeId } = await api<{ payeeId: number }>('POST', '/rules', { matchType: form.matchType, pattern: form.pattern, name: form.name, categoryId: form.categoryId }));
-    } else if (form.categoryId !== initial.categoryId) {
-      await api('PATCH', `/payees/${payeeId}`, { categoryId: form.categoryId });
+      // A purpose rule usually leads to another payee (PayPal → Spotify): keep that payee's category unless the user picked one.
+      const category = form.purpose.trim() && form.category === initial.category ? {} : payeeCategoryBody(form.category);
+      ({ payeeId } = await api<{ payeeId: number }>('POST', '/rules', { matchType: form.matchType, pattern: form.pattern, purpose: form.purpose, name: form.name, ...category }));
+    } else if (form.category !== initial.category) {
+      await api('PATCH', `/payees/${payeeId}`, payeeCategoryBody(form.category));
     }
+    if (form.txCategoryId !== initial.txCategoryId) await api('PATCH', '/transactions', { ids: [tx.id], categoryId: form.txCategoryId });
     const plan = linkable.find((p) => p.id === linkPlanId);
     if (plan) await api('POST', '/matches', [{ planId: plan.id, transactionId: tx.id, period: periodFor(plan, tx.date) }]);
     if (rec.on && !match) {
-      const input = { type: 'recurring' as const, name: (rec.name ?? form.name).trim() || form.name, payeeId, categoryId: form.categoryId, frequency: rec.frequency, startDate: rec.start, endDate: rec.endless ? null : rec.end || null, amount: recAmount };
+      const input = { type: 'recurring' as const, name: (rec.name ?? form.name).trim() || form.name, payeeId, categoryId: payeeCat?.id ?? form.txCategoryId, frequency: rec.frequency, startDate: rec.start, endDate: rec.endless ? null : rec.end || null, amount: recAmount };
       const { id } = await api<{ id: number }>('POST', '/plans', input);
       const asPlan: Plan = { ...input, id, status: 'active', amounts: [{ id: 0, validFrom: input.startDate, amount: input.amount }] };
       const txs = [tx, ...history.filter((h) => isPicked(h.transaction.id)).map((h) => h.transaction)];
@@ -260,6 +274,10 @@ function TransactionPanel({ tx, onClose }: { tx: Transaction; onClose: () => voi
           <Amount cents={tx.amount} className="kpi-v" />
           <div className="small muted">{date(tx.date)} · {tx.purpose}</div>
         </div>
+        <label className="field"><span>{t('txCategory')}</span>
+          <CategorySelect value={form.txCategoryId} onChange={(txCategoryId) => setForm({ ...form, txCategoryId })}
+            noneLabel={payeeCat ? t('likePayee', { name: categoryLabel(state.categories, payeeCat) }) : t('uncategorized')} />
+        </label>
         <div className="divider" />
         <div className="field"><span>{t('rawName')}</span><div className="hint num">{tx.rawPayee}</div></div>
         <label className="field"><span>{t('displayName')}</span><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
@@ -271,8 +289,9 @@ function TransactionPanel({ tx, onClose }: { tx: Transaction; onClose: () => voi
           </label>
           <label className="field"><span>{t('pattern')}</span><input value={form.pattern} onChange={(e) => setForm({ ...form, pattern: e.target.value })} /></label>
         </div>
+        <label className="field"><span>{t('purposeContains')}</span><input value={form.purpose} placeholder={t('purposePh')} onChange={(e) => setForm({ ...form, purpose: e.target.value })} /></label>
         {ruleChanged && <div className="hint">{t('affects', { n: affected })}</div>}
-        <label className="field"><span>{t('payeeCategory')}</span><CategorySelect value={form.categoryId} onChange={(categoryId) => setForm({ ...form, categoryId })} /></label>
+        <label className="field"><span>{t('payeeCategory')}</span><PayeeCategorySelect value={form.category} onChange={(category) => setForm({ ...form, category })} /></label>
         <div className="divider" />
 
         {matchedPlan ? (

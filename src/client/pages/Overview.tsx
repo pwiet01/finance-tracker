@@ -20,7 +20,7 @@ export function budgetFor(plans: ReturnType<typeof useData>['state']['plans'], i
 }
 
 export function OverviewPage() {
-  const { state, today } = useData();
+  const { state, lk, today } = useData();
   const { t, money, monthLabel, pct } = useSettings();
   const latest = state.transactions[0]?.date ?? today;
   const months = useMemo(() => recentMonths(latest, 6), [latest]);
@@ -30,7 +30,7 @@ export function OverviewPage() {
   const legend = [...tops.map((c) => ({ id: c.id, name: c.name, color: c.color })), { id: 0, name: t('uncategorized'), color: UNCATEGORIZED_COLOR }];
   const sum = summaries.find((s) => s.month === selected) ?? summaries[summaries.length - 1];
   const total = [...sum.byCategory.values()].reduce((a, b) => a + Math.max(0, b), 0);
-  const uncategorized = state.transactions.filter((tx) => !state.payees.find((p) => p.id === tx.payeeId)?.categoryId).length;
+  const uncategorized = state.transactions.filter((tx) => !lk.categoryOf(tx)).length;
   const suggestions = useMemo(() => suggestMatches(state).length, [state]);
   const detected = useMemo(() => detectRecurring(state, today).length, [state, today]);
 

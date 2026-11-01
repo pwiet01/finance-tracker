@@ -53,7 +53,11 @@ for (let m = now - 11; m <= now; m++) {
   for (let i = 0; i < 2 + Math.floor(rand() * 3); i++) add(d(1 + Math.floor(rand() * 28)), rand() > 0.5 ? 'TRATTORIA DA LUIGI' : 'SUSHI BAR KAITO', 'VISA Debitkartenumsatz', -between(16, 58));
   if (rand() > 0.5) add(d(8 + Math.floor(rand() * 18)), 'KINO AM PARK', 'VISA Debitkartenumsatz', -between(11, 24));
   if (rand() > 0.6) add(d(5 + Math.floor(rand() * 20)), 'DB Fernverkehr AG', 'Fahrkarte', -between(29, 89));
-  add(d(6 + Math.floor(rand() * 20)), 'PAYPAL EUROPE S.A.R.L. ET CIE S.C.A', 'PP.' + Math.floor(rand() * 1e4) + '.PP . Ihr Einkauf', -between(9, 45));
+  const shops = ['Spotify AB', 'Thalia Buecher GmbH', 'Zalando SE', 'Lieferando'];
+  for (let i = 0; i < 1 + Math.floor(rand() * 2); i++) {
+    const shop = shops[Math.floor(rand() * shops.length)];
+    add(d(6 + Math.floor(rand() * 20)), 'PAYPAL EUROPE S.A.R.L. ET CIE S.C.A', `PP.${Math.floor(rand() * 1e4)}.PP . ${shop}, Ihr Einkauf bei ${shop}`, -between(9, 45));
+  }
   if (rand() > 0.7) add(d(1 + Math.floor(rand() * 27)), 'KIOSK AM MARKT', 'VISA Debitkartenumsatz', -between(3, 9));
 }
 // The one-off "bike part" expected for the 25th is booked a few days late and a bit dearer.

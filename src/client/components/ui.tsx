@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import type { Category } from '../../shared/types';
+import type { Category, Payee } from '../../shared/types';
 import { useData } from '../data';
 import { useSettings } from '../settings';
 
@@ -66,20 +66,42 @@ export function categoryLabel(categories: Category[], c: Category): string {
 export function CategorySelect({ value, onChange, allowNone = true, noneLabel, kind }: {
   value: number | null; onChange: (id: number | null) => void; allowNone?: boolean; noneLabel?: string; kind?: 'expense' | 'income';
 }) {
-  const { state } = useData();
   const { t } = useSettings();
-  const tops = state.categories.filter((c) => !c.parentId && (!kind || c.kind === kind));
   return (
     <select value={value ?? ''} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}>
       {allowNone && <option value="">{noneLabel ?? t('uncategorized')}</option>}
-      {tops.map((top) => (
-        <optgroup key={top.id} label={top.name}>
-          <option value={top.id}>{top.name}</option>
-          {state.categories.filter((c) => c.parentId === top.id).map((c) => (
-            <option key={c.id} value={c.id}>{top.name} › {c.name}</option>
-          ))}
-        </optgroup>
+      <CategoryOptions kind={kind} />
+    </select>
+  );
+}
+
+function CategoryOptions({ kind }: { kind?: 'expense' | 'income' }) {
+  const { state } = useData();
+  return state.categories.filter((c) => !c.parentId && (!kind || c.kind === kind)).map((top) => (
+    <optgroup key={top.id} label={top.name}>
+      <option value={top.id}>{top.name}</option>
+      {state.categories.filter((c) => c.parentId === top.id).map((c) => (
+        <option key={c.id} value={c.id}>{top.name} › {c.name}</option>
       ))}
+    </optgroup>
+  ));
+}
+
+/** A payee's default category, or 'mixed' when each of its bookings is categorised on its own. */
+export type PayeeCategory = number | null | 'mixed';
+
+export const payeeCategory = (p: Payee | undefined): PayeeCategory => (p?.mixed ? 'mixed' : p?.categoryId ?? null);
+
+/** Request fields that set a payee's category. */
+export const payeeCategoryBody = (v: PayeeCategory) => (v === 'mixed' ? { mixed: true } : { categoryId: v });
+
+export function PayeeCategorySelect({ value, onChange }: { value: PayeeCategory; onChange: (v: PayeeCategory) => void }) {
+  const { t } = useSettings();
+  return (
+    <select value={value ?? ''} onChange={(e) => onChange(e.target.value === 'mixed' ? 'mixed' : e.target.value ? Number(e.target.value) : null)}>
+      <option value="">{t('uncategorized')}</option>
+      <option value="mixed">{t('mixed')}</option>
+      <CategoryOptions />
     </select>
   );
 }

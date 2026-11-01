@@ -98,6 +98,25 @@ const MIGRATIONS: ((db: DatabaseSync) => void)[] = [
   },
   (db) => {
     db.exec('CREATE TABLE recurring_ignores (key TEXT PRIMARY KEY)');
+  },
+  (db) => {
+    // Per-booking categories, payees without a default category, and rules that also look at the purpose.
+    db.exec(`
+      ALTER TABLE transactions ADD COLUMN category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL;
+      ALTER TABLE payees ADD COLUMN mixed INTEGER NOT NULL DEFAULT 0;
+      CREATE TABLE payee_rules_new (
+        id INTEGER PRIMARY KEY,
+        match_type TEXT NOT NULL,
+        pattern TEXT NOT NULL,
+        purpose TEXT NOT NULL DEFAULT '',
+        payee_id INTEGER NOT NULL REFERENCES payees(id) ON DELETE CASCADE,
+        auto INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (match_type, pattern, purpose)
+      );
+      INSERT INTO payee_rules_new (id, match_type, pattern, payee_id, auto) SELECT id, match_type, pattern, payee_id, auto FROM payee_rules;
+      DROP TABLE payee_rules;
+      ALTER TABLE payee_rules_new RENAME TO payee_rules;
+    `);
   }
 ];
 

@@ -4,7 +4,7 @@ import type { AppState, Plan, Transaction } from '../src/shared/types';
 
 let nextId = 1;
 const tx = (date: string, amount: number, payeeId = 1): Transaction => ({
-  id: nextId++, date, valueDate: date, amount, rawPayee: 'x', purpose: '', iban: null, type: null, payeeId, importId: 1
+  id: nextId++, date, valueDate: date, amount, rawPayee: 'x', purpose: '', iban: null, type: null, payeeId, categoryId: null, importId: 1
 });
 const state = (transactions: Transaction[], s: Partial<AppState> = {}): AppState => ({
   categories: [], payees: [], rules: [], transactions, plans: [], matches: [], dismissals: [], ignoredRecurring: [], balance: null, ...s
