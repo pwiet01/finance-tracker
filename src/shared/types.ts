@@ -136,7 +136,7 @@ export interface ImportResult {
   transactionIds: number[];
 }
 
-export type SyncState = 'off' | 'idle' | 'pending' | 'syncing' | 'conflict' | 'error';
+export type SyncState = 'off' | 'idle' | 'syncing' | 'conflict' | 'error';
 
 export interface SyncStatus {
   /** OAuth client id and secret are known (entered or from the environment). */
@@ -145,6 +145,10 @@ export interface SyncStatus {
   fromEnv: boolean;
   connected: boolean;
   state: SyncState;
+  /** The local data changed since the last sync and is not in Drive yet. */
+  localChanges: boolean;
+  /** Drive has a version from another computer that is not here yet (as of the last check). */
+  remoteChanges: boolean;
   lastSync: string | null;
   error: string | null;
   /** Link to the database file in Google Drive. */
