@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { forecast } from '../src/shared/forecast';
 import { historyCandidates, suggestMatches } from '../src/shared/matching';
-import { amountAt, occurrences } from '../src/shared/plans';
+import { amountAt, groupRecurring, occurrences } from '../src/shared/plans';
 import type { AppState, Plan, Transaction } from '../src/shared/types';
 
 const plan = (p: Partial<Plan> & { amount?: number }): Plan => ({
@@ -32,6 +32,30 @@ describe('plans', () => {
     p.amounts.push({ id: 2, validFrom: '2026-06-01', amount: -1200 });
     expect(amountAt(p, '2026-05-15')).toBe(-1000);
     expect(amountAt(p, '2026-06-15')).toBe(-1200);
+  });
+});
+
+describe('recurring groups', () => {
+  it('groups by main category, folds subcategories and sums monthly equivalents', () => {
+    const cat = (id: number, name: string, parentId: number | null = null, kind: 'expense' | 'income' = 'expense') => ({ id, name, parentId, color: '#000', kind });
+    const s = state({
+      categories: [cat(1, 'Wohnen'), cat(2, 'Miete', 1), cat(3, 'Versicherung', 1), cat(4, 'Einkommen', null, 'income'), cat(5, 'Abos')],
+      payees: [{ id: 1, name: 'Vermieter', categoryId: 2, mixed: false }, { id: 2, name: 'Arbeitgeber', categoryId: 4, mixed: false }],
+      plans: [
+        plan({ id: 1, name: 'Miete', amount: -90000 }),
+        plan({ id: 2, name: 'Haftpflicht', payeeId: null, categoryId: 3, frequency: 12, amount: -12000 }),
+        plan({ id: 3, name: 'Gehalt', payeeId: 2, amount: 300000 }),
+        plan({ id: 4, name: 'Alt', payeeId: null, categoryId: 5, endDate: '2026-02-01', amount: -999 }),
+        plan({ id: 5, name: 'Sonstiges', payeeId: null, amount: -500 }),
+        plan({ id: 6, name: 'Streaming', payeeId: null, categoryId: 5, amount: -1500 })
+      ]
+    });
+    const g = groupRecurring(s, '2026-06-01');
+    expect(g.map((x) => x.category?.name ?? null)).toEqual(['Einkommen', 'Wohnen', 'Abos', null]);
+    expect(g[1].plans.map((p) => p.id)).toEqual([1, 2]);
+    expect(g[1].monthly).toBe(-91000);
+    expect(g[2].plans.map((p) => p.id)).toEqual([6, 4]);
+    expect(g[2].monthly).toBe(-1500);
   });
 });
 

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { dateInMonth, monthIndex, monthKey } from '../../shared/dates';
 import { suggestMatches } from '../../shared/matching';
-import { amountAt, nextOccurrence, occurrenceStatus, occurrences, oneoffStatus, subtree } from '../../shared/plans';
+import { amountAt, groupRecurring, nextOccurrence, occurrenceStatus, occurrences, oneoffStatus, planCategoryId, subtree } from '../../shared/plans';
 import { spentInMonth } from '../../shared/stats';
 import type { Plan, PlanType } from '../../shared/types';
 import { MatchList } from '../components/MatchList';
@@ -55,46 +55,48 @@ export function PlanningPage({ tab = 'recurring' }: { tab?: string }) {
 
 function RecurringList({ onEdit }: { onEdit: (p: Plan) => void }) {
   const { state, today, lk } = useData();
-  const { t, date } = useSettings();
-  const plans = state.plans.filter((p) => p.type === 'recurring');
-  if (!plans.length) return <div className="card empty">{t('noPlans')}</div>;
+  const { t, date, money } = useSettings();
+  const groups = useMemo(() => groupRecurring(state, today), [state, today]);
+  if (!groups.length) return <div className="card empty">{t('noPlans')}</div>;
   const month = monthIndex(today);
-  const sorted = [...plans].sort((a, b) => {
-    const ea = a.endDate !== null && a.endDate < today, eb = b.endDate !== null && b.endDate < today;
-    if (ea !== eb) return ea ? 1 : -1;
-    const aa = amountAt(a, today), ab = amountAt(b, today);
-    return (ab > 0 ? 1 : 0) - (aa > 0 ? 1 : 0) || Math.abs(ab) - Math.abs(aa);
-  });
 
   return (
     <section className="card flush">
       <div className="tbl-wrap">
         <table className="tbl" style={{ minWidth: 820 }}>
           <thead><tr><th>{t('name')}</th><th>{t('category')}</th><th>{t('frequency')}</th><th>{t('next')}</th><th>{t('duration')}</th><th>{t('thisMonth')}</th><th className="r">{t('amount')}</th></tr></thead>
-          <tbody>
-            {sorted.map((p) => {
-              const next = nextOccurrence(p, today);
-              const ended = p.endDate !== null && p.endDate < today;
-              const thisMonth = occurrences(p, dateInMonth(month, 1), dateInMonth(month, 31));
-              const status = thisMonth.length ? occurrenceStatus(state, p, thisMonth[0], today) : null;
-              const changes = p.amounts.filter((a) => a.validFrom > today);
-              return (
-                <tr key={p.id} className="click" onClick={() => onEdit(p)} style={ended ? { opacity: 0.55 } : undefined}>
-                  <td>
-                    <button type="button" className="rowbtn" onClick={(e) => { e.stopPropagation(); onEdit(p); }}>{p.name}</button>
-                    {p.payeeId && <div className="small muted">{lk.payeeName(p.payeeId)}</div>}
-                    {changes.map((c) => <div key={c.id} className="change">↳ {t('fromDate', { date: date(c.validFrom) })}: <Amount cents={c.amount} className="change" /></div>)}
-                  </td>
-                  <td><CategoryChip categoryId={p.categoryId ?? state.payees.find((x) => x.id === p.payeeId)?.categoryId} /></td>
-                  <td className="muted">{t(`freq${p.frequency}` as Key)}</td>
-                  <td className="num">{next ? date(next) : '—'}</td>
-                  <td className="small muted">{t('since', { date: date(p.startDate) })}{p.endDate ? ` · ${t('until', { date: date(p.endDate) })}` : ` · ${t('endless')}`}</td>
-                  <td>{ended ? <span className="chip">{t('ended')}</span> : status && <span className={`chip ${status === 'paid' ? 'ok' : status === 'overdue' ? 'warn' : ''}`}>{t(status)}</span>}</td>
-                  <td><Amount cents={amountAt(p, next ?? today)} /></td>
-                </tr>
-              );
-            })}
-          </tbody>
+          {groups.map((g) => (
+            <tbody key={g.category?.id ?? 'none'}>
+              <tr className="grp">
+                <td colSpan={5}>
+                  <span className="row strong"><Dot color={g.category?.color ?? '#ADB5BD'} />{g.category?.name ?? t('uncategorized')}<span className="small muted">{g.plans.length === 1 ? t('nPlans1') : t('nPlans', { n: g.plans.length })}</span></span>
+                </td>
+                <td colSpan={2} className="r small muted num">{money(g.monthly, { signed: true })} {t('perMonth')}</td>
+              </tr>
+              {g.plans.map((p) => {
+                const next = nextOccurrence(p, today);
+                const ended = p.endDate !== null && p.endDate < today;
+                const thisMonth = occurrences(p, dateInMonth(month, 1), dateInMonth(month, 31));
+                const status = thisMonth.length ? occurrenceStatus(state, p, thisMonth[0], today) : null;
+                const changes = p.amounts.filter((a) => a.validFrom > today);
+                return (
+                  <tr key={p.id} className="click" onClick={() => onEdit(p)} style={ended ? { opacity: 0.55 } : undefined}>
+                    <td>
+                      <button type="button" className="rowbtn" onClick={(e) => { e.stopPropagation(); onEdit(p); }}>{p.name}</button>
+                      {p.payeeId && <div className="small muted">{lk.payeeName(p.payeeId)}</div>}
+                      {changes.map((c) => <div key={c.id} className="change">↳ {t('fromDate', { date: date(c.validFrom) })}: <Amount cents={c.amount} className="change" /></div>)}
+                    </td>
+                    <td><CategoryChip categoryId={planCategoryId(state, p)} /></td>
+                    <td className="muted">{t(`freq${p.frequency}` as Key)}</td>
+                    <td className="num">{next ? date(next) : '—'}</td>
+                    <td className="small muted">{t('since', { date: date(p.startDate) })}{p.endDate ? ` · ${t('until', { date: date(p.endDate) })}` : ` · ${t('endless')}`}</td>
+                    <td>{ended ? <span className="chip">{t('ended')}</span> : status && <span className={`chip ${status === 'paid' ? 'ok' : status === 'overdue' ? 'warn' : ''}`}>{t(status)}</span>}</td>
+                    <td className="r"><Amount cents={amountAt(p, next ?? today)} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          ))}
         </table>
       </div>
     </section>
