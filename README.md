@@ -70,7 +70,25 @@ npm start        # builds and serves http://localhost:4321
 npm run demo     # same, with twelve months of invented demo data
 ```
 
-Your data lives in `data/finance.db` (`FT_DB` to change it, `PORT` for the port). Back it up by copying the file or via *Export backup*.
+Your data lives in `data/finance.db` (`FT_DB` to change it, `PORT` for the port). Back it up by copying the file, or turn on Google Drive sync.
+
+### Google Drive sync
+
+Optional. The database is uploaded to a `finance-tracker` folder in your Google Drive a few seconds after every change,
+and changes made on another computer are fetched on start and every 5 minutes. If both sides changed, the app asks which
+version to keep; the replaced local data is kept as `data/finance.before-sync.db`. Drive keeps earlier versions under *Manage versions*.
+
+It needs your own OAuth client, once:
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/), create a project and enable the **Google Drive API**.
+2. Under *Google Auth Platform*, set the app up for external users and **publish** it. In testing mode, sign-ins expire after 7 days.
+   The app only uses the `drive.file` scope (files it created itself), so no review by Google is needed.
+3. Under *Clients*, create an OAuth client of type **Desktop app**.
+4. Click *Set up Google Drive* in the sidebar, enter client ID and secret, and connect.
+   Alternatively set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+
+Credentials and tokens are stored in `data/finance.google-drive.json` next to the database, never uploaded.
+`npm run demo` runs without sync; `FT_SYNC=off` turns it off in general.
 
 For development: `npm run dev` (Vite + API with hot reload), `npm test`, `npm run typecheck`.
 

@@ -1,10 +1,27 @@
 import { Hono } from 'hono';
 import { importers } from './importers';
 import { HttpError, type Store } from './store';
+import type { Resolution, Sync } from './sync';
 
-export function createApi(store: Store) {
+/** Only send the browser back to the app itself after signing in with Google. */
+function localUrl(s: unknown): string {
+  try {
+    const u = new URL(String(s));
+    return u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname) ? u.href : '/';
+  } catch {
+    return '/';
+  }
+}
+
+export function createApi(store: Store, sync?: Sync) {
   const api = new Hono();
   const id = (s: string) => Number(s);
+
+  // Every successful write triggers a (debounced) upload to Google Drive.
+  api.use('*', async (c, next) => {
+    await next();
+    if (sync && c.req.method !== 'GET' && c.res.status < 400 && !c.req.path.startsWith('/api/sync')) sync.changed();
+  });
 
   api.onError((err, c) => {
     if (err instanceof HttpError) return c.json({ error: err.message }, err.status as 400);
@@ -13,10 +30,32 @@ export function createApi(store: Store) {
   });
 
   api.get('/state', (c) => c.json(store.state()));
-  api.get('/export', (c) => {
-    c.header('Content-Disposition', `attachment; filename="finance-tracker-${new Date().toISOString().slice(0, 10)}.json"`);
-    return c.json({ version: 1, exportedAt: new Date().toISOString(), ...store.state() });
-  });
+
+  if (sync) {
+    api.get('/sync', (c) => c.json(sync.status()));
+    api.put('/sync/credentials', async (c) => {
+      const b = await c.req.json<{ clientId?: string; clientSecret?: string }>();
+      if (!b.clientId?.trim() || !b.clientSecret?.trim()) throw new HttpError(400, 'Client-ID und Client-Secret angeben.');
+      sync.setCredentials({ clientId: b.clientId, clientSecret: b.clientSecret });
+      return c.json(sync.status());
+    });
+    api.post('/sync/connect', async (c) => {
+      const b = await c.req.json<{ returnTo?: string }>().catch(() => ({} as { returnTo?: string }));
+      if (!sync.status().configured) throw new HttpError(400, 'not_configured');
+      return c.json({ url: sync.beginAuth(localUrl(b.returnTo)) });
+    });
+    api.get('/sync/callback', async (c) => c.redirect(localUrl(await sync.finishAuth(c.req.query()))));
+    api.post('/sync/run', async (c) => {
+      const b = await c.req.json<{ resolve?: Resolution }>().catch(() => ({} as { resolve?: Resolution }));
+      if (b.resolve && b.resolve !== 'local' && b.resolve !== 'drive') throw new HttpError(400, 'invalid_resolution');
+      await sync.run(b.resolve).catch(() => undefined);
+      return c.json(sync.status());
+    });
+    api.delete('/sync', async (c) => {
+      await sync.disconnect();
+      return c.json(sync.status());
+    });
+  }
 
   api.get('/formats', (c) => c.json(importers.map((i) => ({ id: i.id, name: i.name }))));
   api.post('/import/preview', async (c) => {

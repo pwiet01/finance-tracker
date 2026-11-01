@@ -27,7 +27,8 @@ const ICONS = {
   trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
   plus: 'M12 5v14M5 12h14',
   link: 'M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1',
-  download: 'M12 3v12M7 10l5 5 5-5M4 19h16'
+  download: 'M12 3v12M7 10l5 5 5-5M4 19h16',
+  cloud: 'M7 19a5 5 0 01-.9-9.92A6 6 0 0117.7 8.1 4.5 4.5 0 0117.5 19z'
 } as const;
 
 export function Icon({ name, label, size }: { name: keyof typeof ICONS; label?: string; size?: number }) {
