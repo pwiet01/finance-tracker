@@ -67,3 +67,49 @@ export function oneoffStatus(plan: Plan, today: string): 'done' | 'open' | 'over
 export function subtree(categories: Category[], id: number): Set<number> {
   return new Set([id, ...categories.filter((c) => c.parentId === id).map((c) => c.id)]);
 }
+
+/** Category a plan falls under: its own, else its payee's. */
+export function planCategoryId(state: AppState, plan: Plan): number | null {
+  return plan.categoryId ?? state.payees.find((p) => p.id === plan.payeeId)?.categoryId ?? null;
+}
+
+export interface RecurringGroup {
+  /** Main category of the group; null = uncategorised. */
+  category: Category | null;
+  plans: Plan[];
+  /** Monthly equivalent of all running plans in the group (yearly ÷ 12 etc.). */
+  monthly: number;
+}
+
+/**
+ * Recurring plans grouped by main category (subcategories fold into their parent).
+ * Income groups come first, then by monthly volume; uncategorised plans last.
+ * Within a group running plans come before ended ones, larger amounts first.
+ */
+export function groupRecurring(state: AppState, today: string): RecurringGroup[] {
+  const byId = new Map(state.categories.map((c) => [c.id, c]));
+  const ended = (p: Plan) => p.endDate !== null && p.endDate < today;
+  const groups = new Map<number | null, RecurringGroup>();
+  for (const p of state.plans) {
+    if (p.type !== 'recurring') continue;
+    const c = byId.get(planCategoryId(state, p) ?? -1);
+    const main = c?.parentId ? byId.get(c.parentId) ?? c : c ?? null;
+    const key = main?.id ?? null;
+    if (!groups.has(key)) groups.set(key, { category: main, plans: [], monthly: 0 });
+    const g = groups.get(key)!;
+    g.plans.push(p);
+    if (!ended(p)) g.monthly += Math.round(amountAt(p, today) / Math.max(1, p.frequency));
+  }
+  for (const g of groups.values()) {
+    g.plans.sort((a, b) => {
+      if (ended(a) !== ended(b)) return ended(a) ? 1 : -1;
+      const aa = amountAt(a, today), ab = amountAt(b, today);
+      return (ab > 0 ? 1 : 0) - (aa > 0 ? 1 : 0) || Math.abs(ab) - Math.abs(aa) || a.name.localeCompare(b.name);
+    });
+  }
+  return [...groups.values()].sort((a, b) =>
+    Number(!a.category) - Number(!b.category)
+    || Number(a.monthly <= 0) - Number(b.monthly <= 0)
+    || Math.abs(b.monthly) - Math.abs(a.monthly)
+    || (a.category?.name ?? '').localeCompare(b.category?.name ?? ''));
+}
