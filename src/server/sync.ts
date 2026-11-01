@@ -79,10 +79,6 @@ export interface SyncOptions {
   redirectUri: string;
   env?: { clientId?: string; clientSecret?: string };
   fetchFn?: Fetch;
-  /** Wait after a change before uploading, so a burst of edits becomes one upload. */
-  debounceMs?: number;
-  /** Regular check for changes made on another computer. */
-  intervalMs?: number;
 }
 
 export type Resolution = 'local' | 'drive';
@@ -90,8 +86,10 @@ export type Resolution = 'local' | 'drive';
 const md5 = (b: Buffer) => createHash('md5').update(b).digest('hex');
 
 /**
- * Keeps the local database and one file in Google Drive in step. Local changes are uploaded,
- * changes from another computer are downloaded; if both sides changed, the user decides.
+ * Keeps the local database and one file in Google Drive in step, when the user asks for it:
+ * local changes are uploaded, changes from another computer are downloaded; if both sides
+ * changed, the user decides. Nothing is transferred automatically; the status only tells
+ * whether there are local changes not in Drive yet, or a newer version in Drive.
  */
 export class Sync {
   private cfg: Config;
@@ -99,8 +97,10 @@ export class Sync {
   private state: SyncState = 'idle';
   private error: string | null = null;
   private queue: Promise<void> = Promise.resolve();
-  private debounce: ReturnType<typeof setTimeout> | null = null;
-  private interval: ReturnType<typeof setInterval> | null = null;
+  /** Cached answer to "are there local changes since the last sync?"; null = compute again. */
+  private localChanged: boolean | null = null;
+  /** Result of the last look at Drive: the file there changed since the last sync. */
+  private remoteChanged = false;
   private pendingAuth = new Map<string, { verifier: string; returnTo: string; at: number }>();
   revision = 0;
 
@@ -132,7 +132,9 @@ export class Sync {
       configured: !!this.credentials(),
       fromEnv: !!(this.opts.env?.clientId && this.opts.env.clientSecret),
       connected,
-      state: !connected ? 'off' : this.debounce && this.state === 'idle' ? 'pending' : this.state,
+      state: !connected ? 'off' : this.state,
+      localChanges: connected && this.hasLocalChanges(),
+      remoteChanges: connected && this.remoteChanged,
       lastSync: this.cfg.lastSync ?? null,
       error: this.error,
       link: this.cfg.link ?? null,
@@ -141,16 +143,17 @@ export class Sync {
     };
   }
 
-  /** Starts the regular checks and syncs once right away. */
+  /** Looks once whether Drive has a newer version; transfers nothing. */
   start() {
-    this.interval = setInterval(() => void this.run().catch(() => undefined), this.opts.intervalMs ?? 5 * 60_000);
-    this.interval.unref?.();
-    void this.run().catch(() => undefined);
+    void this.check().catch(() => undefined);
   }
 
-  stop() {
-    if (this.interval) clearInterval(this.interval);
-    if (this.debounce) clearTimeout(this.debounce);
+  /** Local changes since the last sync. A fresh install with nothing entered yet has none. */
+  private hasLocalChanges(): boolean {
+    if (this.localChanged === null) {
+      this.localChanged = this.cfg.localMd5 ? md5(this.opts.db.snapshot()) !== this.cfg.localMd5 : !this.opts.db.isEmpty();
+    }
+    return this.localChanged;
   }
 
   setCredentials(c: Credentials) {
@@ -197,7 +200,7 @@ export class Sync {
     this.error = null;
     this.state = 'idle';
     this.save();
-    void this.run().catch(() => undefined);
+    void this.check().catch(() => undefined);
     return pending.returnTo;
   }
 
@@ -208,16 +211,34 @@ export class Sync {
     this.drive = null;
     this.error = null;
     this.state = 'idle';
+    this.localChanged = null;
+    this.remoteChanged = false;
     this.save();
     if (token) await revoke(token, this.opts.fetchFn);
   }
 
-  /** Called after every local change: uploads once things have been quiet for a moment. */
+  /** Called after every local write, so the status shows the unsynced changes. */
   changed() {
-    if (!this.client() || this.state === 'conflict') return;
-    if (this.debounce) clearTimeout(this.debounce);
-    this.debounce = setTimeout(() => { this.debounce = null; void this.run().catch(() => undefined); }, this.opts.debounceMs ?? 5_000);
-    this.debounce.unref?.();
+    this.localChanged = null;
+  }
+
+  /** Asks Drive whether the file there changed since the last sync; transfers no data. */
+  async check(): Promise<SyncStatus> {
+    const run = this.queue.then(async () => {
+      const drive = this.client();
+      if (!drive) return;
+      try {
+        const remote = await drive.find(this.cfg.fileId);
+        this.remoteChanged = !!remote && remote.md5Checksum !== this.cfg.remoteMd5;
+        if (this.state === 'error') { this.state = 'idle'; this.error = null; }
+      } catch (e) {
+        // Only a lost sign-in matters here; being offline is no failed sync.
+        if (e instanceof DriveError && e.auth) this.failed(e);
+      }
+    });
+    this.queue = run.catch(() => undefined);
+    await run;
+    return this.status();
   }
 
   /**
@@ -236,14 +257,14 @@ export class Sync {
     if (this.state === 'conflict' && !resolve) return;
     const drive = this.client();
     if (!drive) return;
-    if (this.debounce) { clearTimeout(this.debounce); this.debounce = null; }
     this.state = 'syncing';
     try {
       const local = this.opts.db.snapshot();
       const localMd5 = md5(local);
       const remote = await drive.find(this.cfg.fileId);
       // A fresh install with nothing entered yet takes the Drive data without asking.
-      const localChanged = this.cfg.localMd5 ? localMd5 !== this.cfg.localMd5 : !this.opts.db.isEmpty();
+      this.localChanged = null;
+      const localChanged = this.hasLocalChanges();
       const remoteChanged = !!remote && remote.md5Checksum !== this.cfg.remoteMd5;
 
       const upload = async () => {
@@ -265,6 +286,7 @@ export class Sync {
       else if (localChanged && remoteChanged) {
         this.state = 'conflict';
         this.error = null;
+        this.remoteChanged = true;
         return;
       } else if (remoteChanged) await download();
       else if (localChanged) await upload();
@@ -272,21 +294,27 @@ export class Sync {
       this.state = 'idle';
       this.error = null;
     } catch (e) {
-      this.state = 'error';
-      this.error = (e as Error).message;
-      if (e instanceof DriveError && e.auth) {
-        // Token revoked or expired: back to "not connected", keep the sync state for reconnecting.
-        delete this.cfg.refreshToken;
-        this.drive = null;
-        this.error = 'auth';
-        this.save();
-      }
+      this.failed(e);
       throw e;
+    }
+  }
+
+  private failed(e: unknown) {
+    this.state = 'error';
+    this.error = (e as Error).message;
+    if (e instanceof DriveError && e.auth) {
+      // Token revoked or expired: back to "not connected", keep the sync state for reconnecting.
+      delete this.cfg.refreshToken;
+      this.drive = null;
+      this.error = 'auth';
+      this.save();
     }
   }
 
   private done(fileId: string | undefined, localMd5: string, remoteMd5: string | undefined, link: string | undefined) {
     this.cfg = { ...this.cfg, fileId, localMd5, remoteMd5, link, lastSync: new Date().toISOString() };
+    this.localChanged = false;
+    this.remoteChanged = false;
     this.save();
   }
 }

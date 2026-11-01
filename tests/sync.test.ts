@@ -83,7 +83,7 @@ async function computer(drive: FakeDrive, connect = true) {
   const store = new Store(openDb(file));
   const sync = new Sync({
     file: path.join(dir, 'finance.google-drive.json'), db: new DbFile(file, store), redirectUri: 'http://127.0.0.1:4321/api/sync/callback',
-    env: { clientId: 'id', clientSecret: 'secret' }, fetchFn: drive.fetch, debounceMs: 60_000
+    env: { clientId: 'id', clientSecret: 'secret' }, fetchFn: drive.fetch
   });
   if (connect) {
     const state = new URL(sync.beginAuth('http://localhost:4321/')).searchParams.get('state')!;
@@ -147,6 +147,34 @@ describe('Google Drive sync', () => {
     await a.sync.run();
     await b.sync.run();
     expect(drive.uploads).toBe(uploads);
+  });
+
+  it('transfers nothing on its own, but reports unsynced changes and newer versions in Drive', async () => {
+    const drive = new FakeDrive();
+    const a = await computer(drive);
+    addPlan(a.store, 'Laptop');
+    await a.sync.run();
+    const b = await computer(drive);
+    expect(b.sync.status()).toMatchObject({ localChanges: false, remoteChanges: false });
+
+    addPlan(a.store, 'Fahrrad');
+    a.sync.changed();
+    const uploads = drive.uploads;
+    expect(a.sync.status()).toMatchObject({ state: 'idle', localChanges: true, remoteChanges: false });
+    a.sync.start();
+    await a.sync.check();
+    expect(drive.uploads).toBe(uploads);
+
+    await a.sync.run();
+    expect(a.sync.status().localChanges).toBe(false);
+
+    // The other computer only learns that Drive is newer; its data stays until it syncs.
+    b.sync.start();
+    expect((await b.sync.check()).remoteChanges).toBe(true);
+    expect(planNames(b.store)).toEqual(['Laptop']);
+    await b.sync.run();
+    expect(planNames(b.store)).toEqual(['Fahrrad', 'Laptop']);
+    expect(b.sync.status()).toMatchObject({ localChanges: false, remoteChanges: false });
   });
 
   it('stops at a conflict and lets the user choose', async () => {

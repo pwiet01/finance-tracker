@@ -7,56 +7,90 @@ import { Icon, Modal } from './ui';
 
 const ERRORS: Record<string, Key> = { auth: 'syncErrAuth', access_denied: 'syncErrDenied', invalid_state: 'syncErrDenied' };
 
-/** Sync state in the sidebar; opens the Google Drive dialog. Hidden when the server runs without sync. */
+/** What the sidebar and the dialog say about the sync state. */
+function notice(s: SyncStatus): { key: Key; warn: boolean } {
+  if (!s.connected) return s.error === 'auth' ? { key: 'syncReconnect', warn: true } : { key: 'syncSetup', warn: false };
+  if (s.state === 'syncing') return { key: 'syncing', warn: false };
+  if (s.state === 'conflict') return { key: 'syncConflict', warn: true };
+  if (s.state === 'error') return { key: 'syncFailed', warn: true };
+  if (s.localChanges && s.remoteChanges) return { key: 'syncBoth', warn: true };
+  if (s.localChanges) return { key: 'syncUnsaved', warn: true };
+  if (s.remoteChanges) return { key: 'syncRemoteNewer', warn: true };
+  return { key: 'syncOk', warn: false };
+}
+
+/** Look at Drive for a newer version at most this often when the window gets focus. */
+const CHECK_EVERY_MS = 5 * 60_000;
+
+/**
+ * Sync state in the sidebar: shows unsynced local changes or a newer version in Drive, with a
+ * button to sync. Opens the Google Drive dialog. Hidden when the server runs without sync.
+ */
 export function SyncButton() {
   const { state, reload } = useData();
-  const { t, lang } = useSettings();
+  const { t } = useSettings();
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
   const revision = useRef<number | null>(null);
+  const checked = useRef(Date.now());
+
+  const apply = useCallback((s: SyncStatus) => {
+    // The data was replaced by the version from Drive: show it.
+    if (revision.current !== null && s.revision !== revision.current) void reload();
+    revision.current = s.revision;
+    setStatus(s);
+  }, [reload]);
 
   const refresh = useCallback(async () => {
     try {
-      const s = await api<SyncStatus>('GET', '/sync');
-      // The data was replaced by the version from Drive: show it.
-      if (revision.current !== null && s.revision !== revision.current) void reload();
-      revision.current = s.revision;
-      setStatus(s);
+      apply(await api<SyncStatus>('GET', '/sync'));
     } catch {
       setStatus(null);
     }
-  }, [reload]);
+  }, [apply]);
 
+  // After every change of the data, so "unsynced changes" shows up right away.
   useEffect(() => { void refresh(); }, [state, refresh]);
-  const busy = status?.state === 'pending' || status?.state === 'syncing';
   useEffect(() => {
-    const timer = setInterval(() => void refresh(), busy ? 2_000 : 20_000);
-    const onFocus = () => void refresh();
+    const onFocus = () => {
+      if (Date.now() - checked.current < CHECK_EVERY_MS) return void refresh();
+      checked.current = Date.now();
+      void api<SyncStatus>('POST', '/sync/check').then(apply).catch(() => undefined);
+    };
     window.addEventListener('focus', onFocus);
-    return () => { clearInterval(timer); window.removeEventListener('focus', onFocus); };
-  }, [busy, refresh]);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refresh, apply]);
 
   if (!status) return null;
-  const time = status.lastSync && new Date(status.lastSync).toLocaleTimeString(lang === 'de' ? 'de-DE' : 'en-GB', { hour: '2-digit', minute: '2-digit' });
-  const warn = status.state === 'conflict' || status.state === 'error' || (!status.connected && status.error === 'auth');
-  const label = !status.connected ? t(status.error === 'auth' ? 'syncReconnect' : 'syncSetup')
-    : busy ? t('syncing')
-    : status.state === 'conflict' ? t('syncConflict')
-    : status.state === 'error' ? t('syncFailed')
-    : time ? t('syncedAt', { time }) : t('syncDrive');
+  const n = notice(status);
+  const canSync = status.connected && (status.localChanges || status.remoteChanges) && status.state !== 'conflict' && status.state !== 'syncing';
+
+  const syncNow = async () => {
+    setBusy(true);
+    try {
+      const s = await api<SyncStatus>('POST', '/sync/run', {});
+      apply(s);
+      if (s.state === 'conflict' || s.state === 'error') setOpen(true);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <>
-      <button type="button" className={`link small row ${warn ? 'neg-warn' : ''}`} onClick={() => setOpen(true)}>
-        <Icon name="cloud" size={14} />{label}
-      </button>
-      {open && <SyncDialog status={status} onStatus={setStatus} onClose={() => setOpen(false)} />}
+      <div className="sync-line">
+        <button type="button" className={`link small row ${n.warn ? 'neg-warn' : ''}`} onClick={() => setOpen(true)}>
+          <Icon name="cloud" size={14} />{t(n.key)}
+        </button>
+        {canSync && <button type="button" className="btn sm" disabled={busy} onClick={syncNow}>{t(busy ? 'syncing' : 'syncShort')}</button>}
+      </div>
+      {open && <SyncDialog status={status} onStatus={apply} onClose={() => setOpen(false)} />}
     </>
   );
 }
 
 function SyncDialog({ status, onStatus, onClose }: { status: SyncStatus; onStatus: (s: SyncStatus) => void; onClose: () => void }) {
-  const { reload } = useData();
   const { t, lang } = useSettings();
   const [editCreds, setEditCreds] = useState(!status.configured);
   const [creds, setCreds] = useState({ clientId: '', clientSecret: '' });
@@ -83,11 +117,11 @@ function SyncDialog({ status, onStatus, onClose }: { status: SyncStatus; onStatu
     const { url } = await api<{ url: string }>('POST', '/sync/connect', { returnTo: window.location.href });
     window.location.href = url;
   });
-  const run = (resolve?: 'local' | 'drive') => call(async () => {
-    const s = await api<SyncStatus>('POST', '/sync/run', resolve ? { resolve } : {});
-    if (resolve === 'drive') await reload();
-    return s;
-  });
+  const run = (resolve?: 'local' | 'drive') => call(() => api<SyncStatus>('POST', '/sync/run', resolve ? { resolve } : {}));
+  // Opening the dialog looks at Drive for a newer version.
+  useEffect(() => {
+    if (status.connected) void api<SyncStatus>('POST', '/sync/check').then(onStatus).catch(() => undefined);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const disconnect = () => {
     if (confirm(t('syncDisconnectConfirm'))) void call(() => api<SyncStatus>('DELETE', '/sync'));
   };
@@ -118,13 +152,11 @@ function SyncDialog({ status, onStatus, onClose }: { status: SyncStatus; onStatu
       </div>
     );
   } else {
-    const state = status.state === 'pending' || status.state === 'syncing' ? 'syncing' : status.state;
+    const n = notice(status);
     body = (
       <div className="form">
         <div className="between">
-          <span className={`chip ${state === 'idle' ? 'ok' : state === 'syncing' ? '' : 'warn'}`}>
-            {t(state === 'idle' ? 'syncOk' : state === 'syncing' ? 'syncing' : state === 'conflict' ? 'syncConflict' : 'syncFailed')}
-          </span>
+          <span className={`chip ${n.warn ? 'warn' : status.state === 'idle' ? 'ok' : ''}`}>{t(n.key)}</span>
           {status.link && <a className="link small row" href={status.link} target="_blank" rel="noreferrer"><Icon name="cloud" size={14} />{t('syncOpenDrive')}</a>}
         </div>
         {status.lastSync && <div className="small muted">{t('syncLast', { when: new Date(status.lastSync).toLocaleString(lang === 'de' ? 'de-DE' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' }) })}</div>}
@@ -136,6 +168,9 @@ function SyncDialog({ status, onStatus, onClose }: { status: SyncStatus; onStatu
               <button type="button" className="btn sm" disabled={busy} onClick={() => run('local')}>{t('syncUseLocal')}</button>
             </span>
           </div>
+        )}
+        {status.state !== 'conflict' && (status.localChanges || status.remoteChanges) && (
+          <div className="small">{t(status.localChanges && status.remoteChanges ? 'syncBothText' : status.localChanges ? 'syncUnsavedText' : 'syncRemoteText')}</div>
         )}
         <div className="hint">{t('syncHow')}</div>
       </div>
@@ -153,7 +188,7 @@ function SyncDialog({ status, onStatus, onClose }: { status: SyncStatus; onStatu
           ? <button type="button" className="btn primary" disabled={busy || !creds.clientId.trim() || !creds.clientSecret.trim()} onClick={saveCreds}>{t('save')}</button>
           : !status.connected
             ? <button type="button" className="btn primary" disabled={busy} onClick={connect}>{t('syncConnect')}</button>
-            : <button type="button" className="btn primary" disabled={busy || status.state === 'conflict'} onClick={() => run()}>{t('syncNow')}</button>}
+            : <button type="button" className="btn primary" disabled={busy || status.state === 'conflict' || status.state === 'syncing'} onClick={() => run()}>{t(busy ? 'syncing' : 'syncNow')}</button>}
       </div>
     </>
   );

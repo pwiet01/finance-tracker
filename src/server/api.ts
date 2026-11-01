@@ -17,7 +17,7 @@ export function createApi(store: Store, sync?: Sync) {
   const api = new Hono();
   const id = (s: string) => Number(s);
 
-  // Every successful write triggers a (debounced) upload to Google Drive.
+  // Every successful write may leave changes that are not in Google Drive yet.
   api.use('*', async (c, next) => {
     await next();
     if (sync && c.req.method !== 'GET' && c.res.status < 400 && !c.req.path.startsWith('/api/sync')) sync.changed();
@@ -51,6 +51,7 @@ export function createApi(store: Store, sync?: Sync) {
       await sync.run(b.resolve).catch(() => undefined);
       return c.json(sync.status());
     });
+    api.post('/sync/check', async (c) => c.json(await sync.check()));
     api.delete('/sync', async (c) => {
       await sync.disconnect();
       return c.json(sync.status());

@@ -70,12 +70,14 @@ npm start        # builds and serves http://localhost:4321
 npm run demo     # same, with twelve months of invented demo data
 ```
 
-Your data lives in `data/finance.db` (`FT_DB` to change it, `PORT` for the port). Back it up by copying the file, or turn on Google Drive sync.
+Your data lives in `data/finance.db` (`FT_DB` to change it, `PORT` for the port). Back it up by copying the file, or sync it with Google Drive.
 
 ### Google Drive sync
 
-Optional. The database is uploaded to a `finance-tracker` folder in your Google Drive a few seconds after every change,
-and changes made on another computer are fetched on start and every 5 minutes. If both sides changed, the app asks which
+Optional, and only when you click *Sync*: local changes are uploaded to a `finance-tracker` folder in your Google Drive,
+changes made on another computer are downloaded. The sidebar shows *Unsynced changes* when the local data differs from
+the last sync, and *Newer version in Drive* when another computer synced in the meantime (checked on start, when the
+window gets focus at most every 5 minutes, and when the sync dialog opens). If both sides changed, the app asks which
 version to keep; the replaced local data is kept as `data/finance.before-sync.db`. Drive keeps earlier versions under *Manage versions*.
 
 It needs your own OAuth client, once:
