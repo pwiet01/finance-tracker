@@ -1,7 +1,7 @@
-import { Fragment, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { dateInMonth, monthIndex, monthKey } from '../../shared/dates';
 import { suggestMatches } from '../../shared/matching';
-import { amountAt, groupRecurring, nextOccurrence, occurrenceStatus, occurrences, oneoffStatus, planCategoryId, subtree } from '../../shared/plans';
+import { amountAt, groupRecurring, nextOccurrence, occurrenceStatus, occurrences, oneoffStatus, subtree } from '../../shared/plans';
 import { spentInMonth } from '../../shared/stats';
 import type { Plan, PlanType } from '../../shared/types';
 import { MatchList } from '../components/MatchList';
@@ -60,61 +60,67 @@ function RecurringList({ onEdit }: { onEdit: (p: Plan) => void }) {
   if (!groups.length) return <div className="card empty">{t('noPlans')}</div>;
   const month = monthIndex(today);
 
+  const cols = (
+    <colgroup>
+      <col style={{ width: '32%' }} /><col style={{ width: '12%' }} /><col style={{ width: '13%' }} />
+      <col style={{ width: '21%' }} /><col style={{ width: '10%' }} /><col style={{ width: '12%' }} />
+    </colgroup>
+  );
+  const rows = (plans: Plan[]) => plans.map((p) => {
+    const next = nextOccurrence(p, today);
+    const ended = p.endDate !== null && p.endDate < today;
+    const thisMonth = occurrences(p, dateInMonth(month, 1), dateInMonth(month, 31));
+    const status = thisMonth.length ? occurrenceStatus(state, p, thisMonth[0], today) : null;
+    const changes = p.amounts.filter((a) => a.validFrom > today);
+    return (
+      <tr key={p.id} className="click" onClick={() => onEdit(p)} style={ended ? { opacity: 0.55 } : undefined}>
+        <td>
+          <button type="button" className="rowbtn" onClick={(e) => { e.stopPropagation(); onEdit(p); }}>{p.name}</button>
+          {p.payeeId && <div className="small muted">{lk.payeeName(p.payeeId)}</div>}
+          {changes.map((c) => <div key={c.id} className="change">↳ {t('fromDate', { date: date(c.validFrom) })}: <Amount cents={c.amount} className="change" /></div>)}
+        </td>
+        <td className="muted">{t(`freq${p.frequency}` as Key)}</td>
+        <td className="num">{next ? date(next) : '—'}</td>
+        <td className="small muted">{t('since', { date: date(p.startDate) })}{p.endDate ? ` · ${t('until', { date: date(p.endDate) })}` : ` · ${t('endless')}`}</td>
+        <td>{ended ? <span className="chip">{t('ended')}</span> : status && <span className={`chip ${status === 'paid' ? 'ok' : status === 'overdue' ? 'warn' : ''}`}>{t(status)}</span>}</td>
+        <td className="r"><Amount cents={amountAt(p, next ?? today)} /></td>
+      </tr>
+    );
+  });
+  const count = (n: number) => (n === 1 ? t('nPlans1') : t('nPlans', { n }));
+
   return (
-    <section className="card flush">
-      <div className="tbl-wrap">
-        <table className="tbl" style={{ minWidth: 820 }}>
-          <thead><tr><th>{t('name')}</th><th>{t('category')}</th><th>{t('frequency')}</th><th>{t('next')}</th><th>{t('duration')}</th><th>{t('thisMonth')}</th><th className="r">{t('amount')}</th></tr></thead>
-          {groups.map((g) => {
-            const showSubs = g.subgroups.some((sg) => sg.category);
-            return (
-              <tbody key={g.category?.id ?? 'none'}>
-                <tr className="grp">
-                  <td colSpan={5}>
-                    <span className="row strong"><Dot color={g.category?.color ?? '#ADB5BD'} />{g.category?.name ?? t('uncategorized')}<span className="small muted">{g.plans.length === 1 ? t('nPlans1') : t('nPlans', { n: g.plans.length })}</span></span>
-                  </td>
-                  <td colSpan={2} className="r small muted num">{money(g.monthly, { signed: true })} {t('perMonth')}</td>
-                </tr>
-                {g.subgroups.map((sg) => (
-                  <Fragment key={sg.category?.id ?? 'direct'}>
-                    {showSubs && (
-                      <tr className="subgrp">
-                        <td colSpan={5}>
-                          <span className="row">{sg.category ? <Dot color={sg.category.color} /> : null}<span className={sg.category ? '' : 'muted'}>{sg.category?.name ?? t('directPlans')}</span><span className="small muted">{sg.plans.length === 1 ? t('nPlans1') : t('nPlans', { n: sg.plans.length })}</span></span>
-                        </td>
-                        <td colSpan={2} className="r small muted num">{t('avgPerMonth', { a: money(sg.monthly, { signed: true }) })}</td>
-                      </tr>
-                    )}
-                    {sg.plans.map((p) => {
-                      const next = nextOccurrence(p, today);
-                      const ended = p.endDate !== null && p.endDate < today;
-                      const thisMonth = occurrences(p, dateInMonth(month, 1), dateInMonth(month, 31));
-                      const status = thisMonth.length ? occurrenceStatus(state, p, thisMonth[0], today) : null;
-                      const changes = p.amounts.filter((a) => a.validFrom > today);
-                      return (
-                        <tr key={p.id} className="click" onClick={() => onEdit(p)} style={ended ? { opacity: 0.55 } : undefined}>
-                          <td>
-                            <button type="button" className="rowbtn" onClick={(e) => { e.stopPropagation(); onEdit(p); }}>{p.name}</button>
-                            {p.payeeId && <div className="small muted">{lk.payeeName(p.payeeId)}</div>}
-                            {changes.map((c) => <div key={c.id} className="change">↳ {t('fromDate', { date: date(c.validFrom) })}: <Amount cents={c.amount} className="change" /></div>)}
-                          </td>
-                          <td><CategoryChip categoryId={planCategoryId(state, p)} /></td>
-                          <td className="muted">{t(`freq${p.frequency}` as Key)}</td>
-                          <td className="num">{next ? date(next) : '—'}</td>
-                          <td className="small muted">{t('since', { date: date(p.startDate) })}{p.endDate ? ` · ${t('until', { date: date(p.endDate) })}` : ` · ${t('endless')}`}</td>
-                          <td>{ended ? <span className="chip">{t('ended')}</span> : status && <span className={`chip ${status === 'paid' ? 'ok' : status === 'overdue' ? 'warn' : ''}`}>{t(status)}</span>}</td>
-                          <td className="r"><Amount cents={amountAt(p, next ?? today)} /></td>
-                        </tr>
-                      );
-                    })}
-                  </Fragment>
+    <div className="stack">
+      {groups.map((g) => {
+        const showSubs = g.subgroups.some((sg) => sg.category);
+        return (
+          <section key={g.category?.id ?? 'none'} className="card rgroup">
+            <div className="rgroup-head">
+              <span className="row strong"><Dot color={g.category?.color ?? '#ADB5BD'} />{g.category?.name ?? t('uncategorized')}<span className="small muted">{count(g.plans.length)}</span></span>
+              <span className="small muted num">{money(g.monthly, { signed: true })} {t('perMonth')}</span>
+            </div>
+            <div className="tbl-wrap">
+              <div className="rgroup-body">
+                <table className="tbl fixed">
+                  {cols}
+                  <thead><tr><th>{t('name')}</th><th>{t('frequency')}</th><th>{t('next')}</th><th>{t('duration')}</th><th>{t('thisMonth')}</th><th className="r">{t('amount')}</th></tr></thead>
+                  {!showSubs && <tbody>{rows(g.plans)}</tbody>}
+                </table>
+                {showSubs && g.subgroups.map((sg) => (
+                  <div key={sg.category?.id ?? 'direct'} className="subbox" style={{ borderLeftColor: sg.category?.color ?? 'var(--border)' }}>
+                    <div className="subbox-head">
+                      <span className="row">{sg.category ? <Dot color={sg.category.color} /> : null}<span className={sg.category ? 'strong' : 'muted'}>{sg.category?.name ?? t('directPlans')}</span><span className="small muted">{count(sg.plans.length)}</span></span>
+                      <span className="small muted num">{t('avgPerMonth', { a: money(sg.monthly, { signed: true }) })}</span>
+                    </div>
+                    <table className="tbl fixed">{cols}<tbody>{rows(sg.plans)}</tbody></table>
+                  </div>
                 ))}
-              </tbody>
-            );
-          })}
-        </table>
-      </div>
-    </section>
+              </div>
+            </div>
+          </section>
+        );
+      })}
+    </div>
   );
 }
 
