@@ -62,7 +62,7 @@ function RecurringList({ onEdit }: { onEdit: (p: Plan) => void }) {
 
   const cols = (
     <colgroup>
-      <col style={{ width: '32%' }} /><col style={{ width: '12%' }} /><col style={{ width: '13%' }} />
+      <col style={{ width: '29%' }} /><col style={{ width: '15%' }} /><col style={{ width: '13%' }} />
       <col style={{ width: '21%' }} /><col style={{ width: '10%' }} /><col style={{ width: '12%' }} />
     </colgroup>
   );
@@ -146,7 +146,7 @@ function RecurringList({ onEdit }: { onEdit: (p: Plan) => void }) {
           </summary>
           <div className="tbl-wrap">
             <table className="tbl fixed">
-              <colgroup><col style={{ width: '32%' }} /><col style={{ width: '25%' }} /><col style={{ width: '12%' }} /><col style={{ width: '19%' }} /><col style={{ width: '12%' }} /></colgroup>
+              <colgroup><col style={{ width: '30%' }} /><col style={{ width: '24%' }} /><col style={{ width: '15%' }} /><col style={{ width: '19%' }} /><col style={{ width: '12%' }} /></colgroup>
               <thead><tr><th>{t('name')}</th><th>{t('category')}</th><th>{t('frequency')}</th><th>{t('duration')}</th><th className="r">{t('amountPerMonth')}</th></tr></thead>
               <tbody>
                 {ended.map((p) => (
