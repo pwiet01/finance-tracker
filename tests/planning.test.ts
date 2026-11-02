@@ -57,6 +57,26 @@ describe('recurring groups', () => {
     expect(g[2].plans.map((p) => p.id)).toEqual([6, 4]);
     expect(g[2].monthly).toBe(-1500);
   });
+
+  it('splits groups by subcategory and orders subgroups by monthly amount', () => {
+    const cat = (id: number, name: string, parentId: number | null = null) => ({ id, name, parentId, color: '#000', kind: 'expense' as const });
+    const s = state({
+      categories: [cat(1, 'Wohnen'), cat(2, 'Miete', 1), cat(3, 'Versicherung', 1), cat(4, 'Strom', 1)],
+      payees: [],
+      plans: [
+        plan({ id: 1, name: 'Hausrat', payeeId: null, categoryId: 3, frequency: 12, amount: -24000 }),
+        plan({ id: 2, name: 'Miete', payeeId: null, categoryId: 2, amount: -90000 }),
+        plan({ id: 3, name: 'Haftpflicht', payeeId: null, categoryId: 3, amount: -1000 }),
+        plan({ id: 4, name: 'Strom', payeeId: null, categoryId: 4, frequency: 3, amount: -30000 }),
+        plan({ id: 5, name: 'Rundfunk', payeeId: null, categoryId: 1, frequency: 3, amount: -5508 })
+      ]
+    });
+    const [g] = groupRecurring(s, '2026-06-01');
+    expect(g.subgroups.map((x) => [x.category?.name ?? null, x.monthly])).toEqual([['Miete', -90000], ['Strom', -10000], ['Versicherung', -3000], [null, -1836]]);
+    expect(g.subgroups[2].plans.map((p) => p.id)).toEqual([1, 3]);
+    expect(g.plans.map((p) => p.id)).toEqual([2, 4, 1, 3, 5]);
+    expect(g.monthly).toBe(-104836);
+  });
 });
 
 describe('matching', () => {

@@ -100,6 +100,8 @@ h1, h2, h3 { margin: 0; }
 .tbl tr.click { cursor: pointer; }
 .tbl tr.grp td { background: var(--subtle); padding-top: 8px; padding-bottom: 8px; }
 .tbl tbody + tbody tr.grp td { border-top: 1px solid var(--border); }
+.tbl tr.subgrp td { padding-top: 6px; padding-bottom: 6px; font-size: 13px; }
+.tbl tr.subgrp td:first-child { padding-left: 22px; }
 .tbl tr.click:hover td { background: var(--subtle); }
 .tbl tr.sel td { background: var(--accent-soft); }
 .rowbtn { border: 0; background: none; padding: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; text-align: left; font-weight: 500; }
