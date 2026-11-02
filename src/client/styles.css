@@ -24,6 +24,7 @@ h1, h2, h3 { margin: 0; }
 .num { font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
+.nowrap { white-space: nowrap; }
 .strong { font-weight: 500; }
 .row { display: flex; align-items: center; gap: 8px; }
 .between { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
@@ -102,6 +103,11 @@ h1, h2, h3 { margin: 0; }
 .rgroup { padding: 14px 16px 16px; }
 .rgroup-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 0 2px 6px; }
 .rgroup-body { min-width: 720px; display: flex; flex-direction: column; gap: 10px; }
+.ended-plans summary { cursor: pointer; list-style: none; padding-bottom: 0; }
+.ended-plans summary::-webkit-details-marker { display: none; }
+.ended-plans summary .ic { transition: transform .15s; color: var(--muted); }
+.ended-plans[open] summary { padding-bottom: 6px; }
+.ended-plans[open] summary .ic { transform: rotate(90deg); }
 .subbox { border: 1px solid var(--border); border-left-width: 3px; border-radius: 10px; overflow: hidden; }
 .subbox-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; background: var(--subtle); border-bottom: 1px solid var(--border); font-size: 13px; }
 .tbl tr.click:hover td { background: var(--subtle); }

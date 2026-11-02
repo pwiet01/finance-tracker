@@ -9,6 +9,11 @@ export function amountAt(plan: Plan, date: string): number {
   return amount;
 }
 
+/** Monthly equivalent of a recurring plan's amount on a date (yearly ÷ 12, quarterly ÷ 3, …). */
+export function monthlyAmount(plan: Plan, date: string): number {
+  return Math.round(amountAt(plan, date) / Math.max(1, plan.frequency));
+}
+
 /** Due dates of a recurring plan within [from, to], both inclusive. */
 export function occurrences(plan: Plan, from: string, to: string): string[] {
   if (plan.type !== 'recurring') return [];
@@ -73,11 +78,22 @@ export function planCategoryId(state: AppState, plan: Plan): number | null {
   return plan.categoryId ?? state.payees.find((p) => p.id === plan.payeeId)?.categoryId ?? null;
 }
 
+/** Has a recurring plan run out before the given date? */
+export function recurringEnded(plan: Plan, today: string): boolean {
+  return plan.endDate !== null && plan.endDate < today;
+}
+
+/** Ended recurring plans, most recently ended first. */
+export function endedRecurring(state: AppState, today: string): Plan[] {
+  return state.plans.filter((p) => p.type === 'recurring' && recurringEnded(p, today))
+    .sort((a, b) => b.endDate!.localeCompare(a.endDate!) || a.name.localeCompare(b.name));
+}
+
 export interface RecurringSubgroup {
   /** Subcategory; null = plans assigned to the main category itself. */
   category: Category | null;
   plans: Plan[];
-  /** Monthly equivalent of all running plans in the subgroup (yearly ÷ 12 etc.). */
+  /** Monthly equivalent of all plans in the subgroup (yearly ÷ 12 etc.). */
   monthly: number;
 }
 
@@ -87,7 +103,7 @@ export interface RecurringGroup {
   plans: Plan[];
   /** Plans split by subcategory, largest monthly amount first. */
   subgroups: RecurringSubgroup[];
-  /** Monthly equivalent of all running plans in the group (yearly ÷ 12 etc.). */
+  /** Monthly equivalent of all plans in the group (yearly ÷ 12 etc.). */
   monthly: number;
 }
 
@@ -95,14 +111,14 @@ export interface RecurringGroup {
  * Recurring plans grouped by main category, and within it by subcategory.
  * Income groups come first, then by monthly volume; uncategorised plans last.
  * Subgroups are ordered by monthly volume, largest first.
- * Within a subgroup running plans come before ended ones, larger amounts first.
+ * Within a subgroup larger monthly equivalents come first.
+ * Ended plans are left out; see {@link endedRecurring}.
  */
 export function groupRecurring(state: AppState, today: string): RecurringGroup[] {
   const byId = new Map(state.categories.map((c) => [c.id, c]));
-  const ended = (p: Plan) => p.endDate !== null && p.endDate < today;
   const groups = new Map<number | null, RecurringGroup & { subs: Map<number | null, RecurringSubgroup> }>();
   for (const p of state.plans) {
-    if (p.type !== 'recurring') continue;
+    if (p.type !== 'recurring' || recurringEnded(p, today)) continue;
     const c = byId.get(planCategoryId(state, p) ?? -1);
     const main = c?.parentId ? byId.get(c.parentId) ?? c : c ?? null;
     const sub = c && c !== main ? c : null;
@@ -113,14 +129,12 @@ export function groupRecurring(state: AppState, today: string): RecurringGroup[]
     const sg = g.subs.get(sub?.id ?? null)!;
     g.plans.push(p);
     sg.plans.push(p);
-    if (ended(p)) continue;
-    const monthly = Math.round(amountAt(p, today) / Math.max(1, p.frequency));
+    const monthly = monthlyAmount(p, today);
     g.monthly += monthly;
     sg.monthly += monthly;
   }
   const byPlan = (a: Plan, b: Plan) => {
-    if (ended(a) !== ended(b)) return ended(a) ? 1 : -1;
-    const aa = amountAt(a, today), ab = amountAt(b, today);
+    const aa = monthlyAmount(a, today), ab = monthlyAmount(b, today);
     return (ab > 0 ? 1 : 0) - (aa > 0 ? 1 : 0) || Math.abs(ab) - Math.abs(aa) || a.name.localeCompare(b.name);
   };
   const out: RecurringGroup[] = [];

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { dateInMonth, monthIndex, monthKey } from '../../shared/dates';
 import { suggestMatches } from '../../shared/matching';
-import { amountAt, groupRecurring, nextOccurrence, occurrenceStatus, occurrences, oneoffStatus, subtree } from '../../shared/plans';
+import { amountAt, endedRecurring, groupRecurring, monthlyAmount, nextOccurrence, occurrenceStatus, occurrences, oneoffStatus, planCategoryId, subtree } from '../../shared/plans';
 import { spentInMonth } from '../../shared/stats';
 import type { Plan, PlanType } from '../../shared/types';
 import { MatchList } from '../components/MatchList';
@@ -57,40 +57,59 @@ function RecurringList({ onEdit }: { onEdit: (p: Plan) => void }) {
   const { state, today, lk } = useData();
   const { t, date, money } = useSettings();
   const groups = useMemo(() => groupRecurring(state, today), [state, today]);
-  if (!groups.length) return <div className="card empty">{t('noPlans')}</div>;
+  const ended = useMemo(() => endedRecurring(state, today), [state, today]);
   const month = monthIndex(today);
 
   const cols = (
     <colgroup>
-      <col style={{ width: '32%' }} /><col style={{ width: '12%' }} /><col style={{ width: '13%' }} />
+      <col /><col style={{ width: 128 }} /><col style={{ width: '13%' }} />
       <col style={{ width: '21%' }} /><col style={{ width: '10%' }} /><col style={{ width: '12%' }} />
     </colgroup>
   );
+  /** What a non-monthly plan actually charges per due date; the frequency has its own column. */
+  const billed = (p: Plan, on: string) => money(amountAt(p, on), { signed: true });
+  const monthly = (p: Plan, on: string) => (
+    <>
+      <Amount cents={monthlyAmount(p, on)} />
+      {p.frequency > 1 && <div className="small muted num">{billed(p, on)}</div>}
+    </>
+  );
+  const name = (p: Plan) => (
+    <>
+      <button type="button" className="rowbtn" onClick={(e) => { e.stopPropagation(); onEdit(p); }}>{p.name}</button>
+      {p.payeeId && <div className="small muted">{lk.payeeName(p.payeeId)}</div>}
+    </>
+  );
   const rows = (plans: Plan[]) => plans.map((p) => {
     const next = nextOccurrence(p, today);
-    const ended = p.endDate !== null && p.endDate < today;
     const thisMonth = occurrences(p, dateInMonth(month, 1), dateInMonth(month, 31));
     const status = thisMonth.length ? occurrenceStatus(state, p, thisMonth[0], today) : null;
     const changes = p.amounts.filter((a) => a.validFrom > today);
     return (
-      <tr key={p.id} className="click" onClick={() => onEdit(p)} style={ended ? { opacity: 0.55 } : undefined}>
+      <tr key={p.id} className="click" onClick={() => onEdit(p)}>
         <td>
-          <button type="button" className="rowbtn" onClick={(e) => { e.stopPropagation(); onEdit(p); }}>{p.name}</button>
-          {p.payeeId && <div className="small muted">{lk.payeeName(p.payeeId)}</div>}
-          {changes.map((c) => <div key={c.id} className="change">↳ {t('fromDate', { date: date(c.validFrom) })}: <Amount cents={c.amount} className="change" /></div>)}
+          {name(p)}
+          {changes.map((c) => (
+            <div key={c.id} className="change">
+              ↳ {t('fromDate', { date: date(c.validFrom) })}: <Amount cents={monthlyAmount(p, c.validFrom)} className="change" />
+              {p.frequency > 1 && ` (${billed(p, c.validFrom)})`}
+            </div>
+          ))}
         </td>
-        <td className="muted">{t(`freq${p.frequency}` as Key)}</td>
+        <td className="muted nowrap">{t(`freq${p.frequency}` as Key)}</td>
         <td className="num">{next ? date(next) : '—'}</td>
         <td className="small muted">{t('since', { date: date(p.startDate) })}{p.endDate ? ` · ${t('until', { date: date(p.endDate) })}` : ` · ${t('endless')}`}</td>
-        <td>{ended ? <span className="chip">{t('ended')}</span> : status && <span className={`chip ${status === 'paid' ? 'ok' : status === 'overdue' ? 'warn' : ''}`}>{t(status)}</span>}</td>
-        <td className="r"><Amount cents={amountAt(p, next ?? today)} /></td>
+        <td>{status && <span className={`chip ${status === 'paid' ? 'ok' : status === 'overdue' ? 'warn' : ''}`}>{t(status)}</span>}</td>
+        <td className="r">{monthly(p, next ?? today)}</td>
       </tr>
     );
   });
   const count = (n: number) => (n === 1 ? t('nPlans1') : t('nPlans', { n }));
 
+  if (!groups.length && !ended.length) return <div className="card empty">{t('noPlans')}</div>;
   return (
     <div className="stack">
+      {!groups.length && <div className="card empty">{t('noPlans')}</div>}
       {groups.map((g) => {
         const showSubs = g.subgroups.some((sg) => sg.category);
         return (
@@ -103,7 +122,7 @@ function RecurringList({ onEdit }: { onEdit: (p: Plan) => void }) {
               <div className="rgroup-body">
                 <table className="tbl fixed">
                   {cols}
-                  <thead><tr><th>{t('name')}</th><th>{t('frequency')}</th><th>{t('next')}</th><th>{t('duration')}</th><th>{t('thisMonth')}</th><th className="r">{t('amount')}</th></tr></thead>
+                  <thead><tr><th>{t('name')}</th><th>{t('frequency')}</th><th>{t('next')}</th><th>{t('duration')}</th><th>{t('thisMonth')}</th><th className="r">{t('amountPerMonth')}</th></tr></thead>
                   {!showSubs && <tbody>{rows(g.plans)}</tbody>}
                 </table>
                 {showSubs && g.subgroups.map((sg) => (
@@ -120,6 +139,30 @@ function RecurringList({ onEdit }: { onEdit: (p: Plan) => void }) {
           </section>
         );
       })}
+      {ended.length > 0 && (
+        <details className="card rgroup ended-plans">
+          <summary className="rgroup-head">
+            <span className="row strong"><Icon name="chevron" size={16} />{t('endedPlans')}<span className="small muted">{count(ended.length)}</span></span>
+          </summary>
+          <div className="tbl-wrap">
+            <table className="tbl fixed">
+              <colgroup><col /><col style={{ width: '24%' }} /><col style={{ width: 128 }} /><col style={{ width: '19%' }} /><col style={{ width: '12%' }} /></colgroup>
+              <thead><tr><th>{t('name')}</th><th>{t('category')}</th><th>{t('frequency')}</th><th>{t('duration')}</th><th className="r">{t('amountPerMonth')}</th></tr></thead>
+              <tbody>
+                {ended.map((p) => (
+                  <tr key={p.id} className="click" onClick={() => onEdit(p)}>
+                    <td>{name(p)}</td>
+                    <td><CategoryChip categoryId={planCategoryId(state, p)} /></td>
+                    <td className="muted nowrap">{t(`freq${p.frequency}` as Key)}</td>
+                    <td className="small muted num">{date(p.startDate)} – {date(p.endDate!)}</td>
+                    <td className="r">{monthly(p, p.endDate!)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
     </div>
   );
 }

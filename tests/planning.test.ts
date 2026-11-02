@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { forecast } from '../src/shared/forecast';
 import { historyCandidates, suggestMatches } from '../src/shared/matching';
-import { amountAt, groupRecurring, occurrences } from '../src/shared/plans';
+import { amountAt, endedRecurring, groupRecurring, monthlyAmount, occurrences } from '../src/shared/plans';
 import type { AppState, Plan, Transaction } from '../src/shared/types';
 
 const plan = (p: Partial<Plan> & { amount?: number }): Plan => ({
@@ -54,8 +54,23 @@ describe('recurring groups', () => {
     expect(g.map((x) => x.category?.name ?? null)).toEqual(['Einkommen', 'Wohnen', 'Abos', null]);
     expect(g[1].plans.map((p) => p.id)).toEqual([1, 2]);
     expect(g[1].monthly).toBe(-91000);
-    expect(g[2].plans.map((p) => p.id)).toEqual([6, 4]);
+    expect(g[2].plans.map((p) => p.id)).toEqual([6]);
     expect(g[2].monthly).toBe(-1500);
+  });
+
+  it('leaves ended plans out of the groups and lists them separately', () => {
+    const s = state({
+      payees: [],
+      plans: [
+        plan({ id: 1, name: 'Aktiv', payeeId: null }),
+        plan({ id: 2, name: 'Früher', payeeId: null, endDate: '2026-02-01' }),
+        plan({ id: 3, name: 'Kürzlich', payeeId: null, endDate: '2026-05-01' }),
+        plan({ id: 4, name: 'Endet bald', payeeId: null, endDate: '2026-07-01' }),
+        plan({ id: 5, name: 'Einmalig', type: 'oneoff', payeeId: null, endDate: '2026-01-01' })
+      ]
+    });
+    expect(groupRecurring(s, '2026-06-01').flatMap((g) => g.plans.map((p) => p.id))).toEqual([1, 4]);
+    expect(endedRecurring(s, '2026-06-01').map((p) => p.id)).toEqual([3, 2]);
   });
 
   it('splits groups by subcategory and orders subgroups by monthly amount', () => {
@@ -76,6 +91,19 @@ describe('recurring groups', () => {
     expect(g.subgroups[2].plans.map((p) => p.id)).toEqual([1, 3]);
     expect(g.plans.map((p) => p.id)).toEqual([2, 4, 1, 3, 5]);
     expect(g.monthly).toBe(-104836);
+  });
+
+  it('orders plans within a subgroup by monthly equivalent, not billed amount', () => {
+    const s = state({
+      payees: [],
+      plans: [
+        plan({ id: 1, name: 'Jahresabo', payeeId: null, frequency: 12, amount: -6000 }),
+        plan({ id: 2, name: 'Monatsabo', payeeId: null, amount: -1000 }),
+        plan({ id: 3, name: 'Quartal', payeeId: null, frequency: 3, amount: -4500 })
+      ]
+    });
+    expect(groupRecurring(s, '2026-06-01')[0].plans.map((p) => p.id)).toEqual([3, 2, 1]);
+    expect(monthlyAmount(s.plans[0], '2026-06-01')).toBe(-500);
   });
 });
 
