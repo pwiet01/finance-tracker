@@ -66,8 +66,8 @@ function RecurringList({ onEdit }: { onEdit: (p: Plan) => void }) {
       <col style={{ width: '21%' }} /><col style={{ width: '10%' }} /><col style={{ width: '12%' }} />
     </colgroup>
   );
-  /** What a non-monthly plan actually charges per due date, e.g. "−240,00 € jährlich". */
-  const billed = (p: Plan, on: string) => t('billedAs', { a: money(amountAt(p, on), { signed: true }), f: t(`freq${p.frequency}` as Key) });
+  /** What a non-monthly plan actually charges per due date; the frequency has its own column. */
+  const billed = (p: Plan, on: string) => money(amountAt(p, on), { signed: true });
   const monthly = (p: Plan, on: string) => (
     <>
       <Amount cents={monthlyAmount(p, on)} />
