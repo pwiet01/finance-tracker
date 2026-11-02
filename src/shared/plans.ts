@@ -73,41 +73,65 @@ export function planCategoryId(state: AppState, plan: Plan): number | null {
   return plan.categoryId ?? state.payees.find((p) => p.id === plan.payeeId)?.categoryId ?? null;
 }
 
+export interface RecurringSubgroup {
+  /** Subcategory; null = plans assigned to the main category itself. */
+  category: Category | null;
+  plans: Plan[];
+  /** Monthly equivalent of all running plans in the subgroup (yearly ÷ 12 etc.). */
+  monthly: number;
+}
+
 export interface RecurringGroup {
   /** Main category of the group; null = uncategorised. */
   category: Category | null;
   plans: Plan[];
+  /** Plans split by subcategory, largest monthly amount first. */
+  subgroups: RecurringSubgroup[];
   /** Monthly equivalent of all running plans in the group (yearly ÷ 12 etc.). */
   monthly: number;
 }
 
 /**
- * Recurring plans grouped by main category (subcategories fold into their parent).
+ * Recurring plans grouped by main category, and within it by subcategory.
  * Income groups come first, then by monthly volume; uncategorised plans last.
- * Within a group running plans come before ended ones, larger amounts first.
+ * Subgroups are ordered by monthly volume, largest first.
+ * Within a subgroup running plans come before ended ones, larger amounts first.
  */
 export function groupRecurring(state: AppState, today: string): RecurringGroup[] {
   const byId = new Map(state.categories.map((c) => [c.id, c]));
   const ended = (p: Plan) => p.endDate !== null && p.endDate < today;
-  const groups = new Map<number | null, RecurringGroup>();
+  const groups = new Map<number | null, RecurringGroup & { subs: Map<number | null, RecurringSubgroup> }>();
   for (const p of state.plans) {
     if (p.type !== 'recurring') continue;
     const c = byId.get(planCategoryId(state, p) ?? -1);
     const main = c?.parentId ? byId.get(c.parentId) ?? c : c ?? null;
+    const sub = c && c !== main ? c : null;
     const key = main?.id ?? null;
-    if (!groups.has(key)) groups.set(key, { category: main, plans: [], monthly: 0 });
+    if (!groups.has(key)) groups.set(key, { category: main, plans: [], subgroups: [], monthly: 0, subs: new Map() });
     const g = groups.get(key)!;
+    if (!g.subs.has(sub?.id ?? null)) g.subs.set(sub?.id ?? null, { category: sub, plans: [], monthly: 0 });
+    const sg = g.subs.get(sub?.id ?? null)!;
     g.plans.push(p);
-    if (!ended(p)) g.monthly += Math.round(amountAt(p, today) / Math.max(1, p.frequency));
+    sg.plans.push(p);
+    if (ended(p)) continue;
+    const monthly = Math.round(amountAt(p, today) / Math.max(1, p.frequency));
+    g.monthly += monthly;
+    sg.monthly += monthly;
   }
-  for (const g of groups.values()) {
-    g.plans.sort((a, b) => {
-      if (ended(a) !== ended(b)) return ended(a) ? 1 : -1;
-      const aa = amountAt(a, today), ab = amountAt(b, today);
-      return (ab > 0 ? 1 : 0) - (aa > 0 ? 1 : 0) || Math.abs(ab) - Math.abs(aa) || a.name.localeCompare(b.name);
-    });
+  const byPlan = (a: Plan, b: Plan) => {
+    if (ended(a) !== ended(b)) return ended(a) ? 1 : -1;
+    const aa = amountAt(a, today), ab = amountAt(b, today);
+    return (ab > 0 ? 1 : 0) - (aa > 0 ? 1 : 0) || Math.abs(ab) - Math.abs(aa) || a.name.localeCompare(b.name);
+  };
+  const out: RecurringGroup[] = [];
+  for (const { subs, ...g } of groups.values()) {
+    for (const sg of subs.values()) sg.plans.sort(byPlan);
+    g.subgroups = [...subs.values()].sort((a, b) =>
+      Math.abs(b.monthly) - Math.abs(a.monthly) || (a.category?.name ?? '').localeCompare(b.category?.name ?? ''));
+    g.plans = g.subgroups.flatMap((sg) => sg.plans);
+    out.push(g);
   }
-  return [...groups.values()].sort((a, b) =>
+  return out.sort((a, b) =>
     Number(!a.category) - Number(!b.category)
     || Number(a.monthly <= 0) - Number(b.monthly <= 0)
     || Math.abs(b.monthly) - Math.abs(a.monthly)
