@@ -62,7 +62,7 @@ function RecurringList({ onEdit }: { onEdit: (p: Plan) => void }) {
 
   const cols = (
     <colgroup>
-      <col style={{ width: '29%' }} /><col style={{ width: '15%' }} /><col style={{ width: '13%' }} />
+      <col /><col style={{ width: 128 }} /><col style={{ width: '13%' }} />
       <col style={{ width: '21%' }} /><col style={{ width: '10%' }} /><col style={{ width: '12%' }} />
     </colgroup>
   );
@@ -96,7 +96,7 @@ function RecurringList({ onEdit }: { onEdit: (p: Plan) => void }) {
             </div>
           ))}
         </td>
-        <td className="muted">{t(`freq${p.frequency}` as Key)}</td>
+        <td className="muted nowrap">{t(`freq${p.frequency}` as Key)}</td>
         <td className="num">{next ? date(next) : '—'}</td>
         <td className="small muted">{t('since', { date: date(p.startDate) })}{p.endDate ? ` · ${t('until', { date: date(p.endDate) })}` : ` · ${t('endless')}`}</td>
         <td>{status && <span className={`chip ${status === 'paid' ? 'ok' : status === 'overdue' ? 'warn' : ''}`}>{t(status)}</span>}</td>
@@ -146,14 +146,14 @@ function RecurringList({ onEdit }: { onEdit: (p: Plan) => void }) {
           </summary>
           <div className="tbl-wrap">
             <table className="tbl fixed">
-              <colgroup><col style={{ width: '30%' }} /><col style={{ width: '24%' }} /><col style={{ width: '15%' }} /><col style={{ width: '19%' }} /><col style={{ width: '12%' }} /></colgroup>
+              <colgroup><col /><col style={{ width: '24%' }} /><col style={{ width: 128 }} /><col style={{ width: '19%' }} /><col style={{ width: '12%' }} /></colgroup>
               <thead><tr><th>{t('name')}</th><th>{t('category')}</th><th>{t('frequency')}</th><th>{t('duration')}</th><th className="r">{t('amountPerMonth')}</th></tr></thead>
               <tbody>
                 {ended.map((p) => (
                   <tr key={p.id} className="click" onClick={() => onEdit(p)}>
                     <td>{name(p)}</td>
                     <td><CategoryChip categoryId={planCategoryId(state, p)} /></td>
-                    <td className="muted">{t(`freq${p.frequency}` as Key)}</td>
+                    <td className="muted nowrap">{t(`freq${p.frequency}` as Key)}</td>
                     <td className="small muted num">{date(p.startDate)} – {date(p.endDate!)}</td>
                     <td className="r">{monthly(p, p.endDate!)}</td>
                   </tr>
